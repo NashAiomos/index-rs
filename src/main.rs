@@ -46,7 +46,7 @@ struct Transaction {
 }
 
 // get_transactions 的返回结果结构体
-#[derive(CandidType, Deserialize)] // 添加 CandidType
+#[derive(CandidType, Deserialize)]
 struct GetTransactionsResult {
     transactions: Vec<Transaction>, // 交易列表
     total: Nat,                    // 交易总数
@@ -77,7 +77,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
     let ledger_canister_id = Principal::from_text("4c4fd-caaaa-aaaaq-aaa3a-cai")?;
 
     // 初始化 MongoDB 连接
-    let client_options = ClientOptions::parse("mongodb://localhost:27017").await?;
+    let client_options = ClientOptions::parse("mongodb://127.0.0.1:27017").await?;
     let client = Client::with_options(client_options)?;
     let db = client.database("ic_data");
     let collection: Collection<LocalTransaction> = db.collection("transactions");
@@ -134,14 +134,21 @@ async fn main() -> Result<(), Box<dyn Error>> {
         };
 
         // 处理交易数据
+        let mut printed_first = false;
         for tx in transactions_result.transactions.iter() {
             let transaction = LocalTransaction {
-                tx_index: tx.tx_index.0.to_u64().unwrap(), // 需要 use num_traits::cast::ToPrimitive
+                tx_index: tx.tx_index.0.to_u64().unwrap(),
                 timestamp: tx.timestamp.0.to_u64().unwrap(),
                 from_account: format_account(&tx.from),
                 to_account: format_account(&tx.to),
                 amount: tx.amount.0.to_u64().unwrap(),
             };
+
+            // 打印获取到的第一条交易
+            if !printed_first {
+                println!("获取到的第一条交易: {:?}", transaction);
+                printed_first = true;
+            }
 
             // 插入数据库（upsert 方式）
             let filter = doc! { "tx_index": mongodb::bson::Bson::Int64(transaction.tx_index as i64) };
@@ -165,8 +172,6 @@ async fn main() -> Result<(), Box<dyn Error>> {
             // 更新 last_tx_index
             last_tx_index = transaction.tx_index + 1;
         }
-
-        // 等待 1 秒
         sleep(Duration::from_secs(1)).await;
     }
 }
