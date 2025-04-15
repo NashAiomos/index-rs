@@ -1,15 +1,15 @@
 [package]
 name = "index-rs"
 version = "0.1.0"
-edition = "2024"
+edition = "2021"
 
 [dependencies]
-ic-agent = "0.20.0" # 与 IC 交互
-candid = "0.8.0" # Candid 编码/解码
-icrc-ledger-types = "0.1.0" # ICRC 类型定义
-tokio = { version = "1", features = ["full"] } # 异步运行时
-mongodb = "2.0.0" # MongoDB 驱动
-serde = { version = "1.0", features = ["derive"] } # 数据序列化
+candid = "0.9"
+ic-agent = "0.30"
+mongodb = { version = "2.8", features = ["tokio-runtime"] }
+tokio = { version = "1.37", features = ["full"] }
+serde = { version = "1.0", features = ["derive"] }
 log = "0.4"
-env_logger = "0.9"
+env_logger = "0.11"
 hex = "0.4"
+num-traits = "0.2"

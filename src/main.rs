@@ -1,7 +1,7 @@
-use candid::{Decode, Encode, Principal, Nat};
+use candid::{Decode, Encode, Principal, Nat, CandidType};
 use ic_agent::Agent;
 use mongodb::{
-    bson::{doc, Document},
+    bson::doc,
     options::{ClientOptions, IndexOptions},
     Client, Collection, IndexModel,
 };
@@ -9,6 +9,7 @@ use serde::{Deserialize, Serialize};
 use tokio::time::{sleep, Duration};
 use std::error::Error;
 use log::{info, error};
+use num_traits::cast::ToPrimitive;
 
 // 本地交易结构体，用于存储到 MongoDB
 #[derive(Debug, Serialize, Deserialize)]
@@ -45,7 +46,7 @@ struct Transaction {
 }
 
 // get_transactions 的返回结果结构体
-#[derive(CandidType, Deserialize)]
+#[derive(CandidType, Deserialize)] // 添加 CandidType
 struct GetTransactionsResult {
     transactions: Vec<Transaction>, // 交易列表
     total: Nat,                    // 交易总数
@@ -111,6 +112,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
         let response = match agent
             .query(&ledger_canister_id, "get_transactions")
             .with_arg(Encode!(&args)?)
+            .call()
             .await
         {
             Ok(r) => r,
@@ -134,7 +136,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
         // 处理交易数据
         for tx in transactions_result.transactions.iter() {
             let transaction = LocalTransaction {
-                tx_index: tx.tx_index.0.to_u64().unwrap(), // 假设 Nat 可转为 u64
+                tx_index: tx.tx_index.0.to_u64().unwrap(), // 需要 use num_traits::cast::ToPrimitive
                 timestamp: tx.timestamp.0.to_u64().unwrap(),
                 from_account: format_account(&tx.from),
                 to_account: format_account(&tx.to),
@@ -142,7 +144,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
             };
 
             // 插入数据库（upsert 方式）
-            let filter = doc! { "tx_index": transaction.tx_index };
+            let filter = doc! { "tx_index": mongodb::bson::Bson::Int64(transaction.tx_index as i64) };
             let update = doc! { "$setOnInsert": mongodb::bson::to_document(&transaction)? };
             let res = collection
                 .update_one(
