@@ -1,4 +1,14 @@
+extern crate candid;
+extern crate ic_agent;
+extern crate mongodb;
+extern crate serde;
+extern crate log;
+extern crate env_logger;
+extern crate tokio;
+extern crate hex;
+
 use candid::{Decode, Encode, Principal, Nat};
+use candid::CandidType;
 use ic_agent::Agent;
 use mongodb::{
     bson::{doc, Document},
@@ -61,11 +71,16 @@ fn format_account(account: &Account) -> String {
     format!("{}:{}", account.owner.to_text(), subaccount_str)
 }
 
-#[tokio::main]
-async fn main() -> Result<(), Box<dyn Error>> {
+fn main() -> Result<(), Box<dyn Error>> {
     // 初始化日志系统
     env_logger::init();
 
+    // 创建 tokio 运行时
+    let rt = tokio::runtime::Runtime::new()?;
+    rt.block_on(async_main())
+}
+
+async fn async_main() -> Result<(), Box<dyn Error>> {
     // 初始化 IC Agent
     let agent = Agent::builder()
         .with_url("HTTPS://ic0.app")
