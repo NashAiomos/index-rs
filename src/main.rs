@@ -1,177 +1,250 @@
-use candid::{Decode, Encode, Principal, Nat, CandidType};
-use ic_agent::Agent;
-use mongodb::{
-    bson::doc,
-    options::{ClientOptions, IndexOptions},
-    Client, Collection, IndexModel,
-};
-use serde::{Deserialize, Serialize};
-use tokio::time::{sleep, Duration};
+use ic_agent::{Agent};
+use ic_agent::export::Principal;
+use candid::{Encode, Decode, CandidType};
+use serde::{Deserialize};
 use std::error::Error;
-use log::{info, error};
-use num_traits::cast::ToPrimitive;
+use num_traits::ToPrimitive;
+use std::fmt;
 
-// 本地交易结构体，用于存储到 MongoDB
-#[derive(Debug, Serialize, Deserialize)]
-struct LocalTransaction {
-    tx_index: u64,       // 交易索引
-    timestamp: u64,      // 时间戳
-    from_account: String, // 发送方账户
-    to_account: String,   // 接收方账户
-    amount: u64,         // 交易金额
+// 定义参数结构体
+#[derive(CandidType, Deserialize)]
+struct GetTransactionsArg {
+    start: candid::Nat,
+    length: candid::Nat,
 }
 
-// get_transactions 的参数结构体
-#[derive(CandidType, Deserialize)]
-struct GetTransactionsArgs {
-    start: Nat,  // 起始交易索引
-    length: Nat, // 获取的交易数量
-}
-
-// 账户结构体，映射 Motoko 的 { owner: principal; subaccount: opt vec nat8 }
-#[derive(CandidType, Deserialize)]
+// 定义返回结构体
+#[derive(CandidType, Deserialize, Debug)]
 struct Account {
-    owner: Principal,         // 主账户
-    subaccount: Option<Vec<u8>>, // 子账户（可选）
+    owner: Principal,
+    subaccount: Option<Vec<u8>>,
 }
 
-// 交易结构体，映射 Motoko 的 Transaction
-#[derive(CandidType, Deserialize)]
+impl fmt::Display for Account {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let owner_str = self.owner.to_text();
+        let sub_str = match &self.subaccount {
+            Some(sub) => {
+                if sub.is_empty() {
+                    "".to_string()
+                } else {
+                    format!("0x{}", hex::encode(sub))
+                }
+            }
+            None => "".to_string(),
+        };
+        if sub_str.is_empty() {
+            write!(f, "{}", owner_str)
+        } else {
+            write!(f, "{}:{}", owner_str, sub_str)
+        }
+    }
+}
+
+#[derive(CandidType, Deserialize, Debug)]
+struct Transfer {
+    to: Account,
+    fee: Option<candid::Nat>,
+    from: Account,
+    memo: Option<Vec<u8>>,
+    created_at_time: Option<u64>,
+    amount: candid::Nat,
+    spender: Option<Account>,
+}
+
+#[derive(CandidType, Deserialize, Debug)]
+struct Mint {
+    to: Account,
+    amount: candid::Nat,
+    memo: Option<Vec<u8>>,
+    created_at_time: Option<u64>,
+    // ...其他字段...
+}
+
+#[derive(CandidType, Deserialize, Debug)]
+struct Approve {
+    from: Account,
+    spender: Account,
+    amount: candid::Nat,
+    fee: Option<candid::Nat>,
+    memo: Option<Vec<u8>>,
+    created_at_time: Option<u64>,
+    expected_allowance: Option<candid::Nat>,
+    expires_at: Option<u64>,
+    // ...其他字段...
+}
+
+#[derive(CandidType, Deserialize, Debug)]
+struct Burn {
+    from: Account,
+    amount: candid::Nat,
+    memo: Option<Vec<u8>>,
+    created_at_time: Option<u64>,
+    spender: Option<Account>,
+}
+
+#[derive(CandidType, Deserialize, Debug)]
 struct Transaction {
-    tx_index: Nat,  // 交易索引
-    timestamp: Nat, // 时间戳
-    from: Account,  // 发送方账户
-    to: Account,    // 接收方账户
-    amount: Nat,    // 交易金额
+    #[serde(rename = "kind")]
+    kind: String,
+    #[serde(rename = "timestamp")]
+    timestamp: u64,
+    #[serde(rename = "transfer")]
+    transfer: Option<Transfer>,
+    #[serde(rename = "mint")]
+    mint: Option<Mint>,
+    #[serde(rename = "approve")]
+    approve: Option<Approve>,
+    #[serde(rename = "burn")]
+    burn: Option<Burn>,
+    // candid 里有的变体都要加上，字段名全部小写
+    // ...其他字段...
 }
 
-// get_transactions 的返回结果结构体
-#[derive(CandidType, Deserialize)]
+#[derive(CandidType, Deserialize, Debug)]
+struct ArchivedTransaction {
+    callback: Principal,
+    start: candid::Nat,
+    length: candid::Nat,
+}
+
+#[derive(CandidType, Deserialize, Debug)]
 struct GetTransactionsResult {
-    transactions: Vec<Transaction>, // 交易列表
-    total: Nat,                    // 交易总数
+    first_index: candid::Nat,
+    log_length: candid::Nat,
+    transactions: Vec<Transaction>,
+    archived_transactions: Vec<ArchivedTransaction>,
 }
 
-// 将 Account 转换为字符串格式
-fn format_account(account: &Account) -> String {
-    let subaccount_str = account
-        .subaccount
-        .as_ref()
-        .map(|sa| hex::encode(sa))
-        .unwrap_or_default();
-    format!("{}:{}", account.owner.to_text(), subaccount_str)
+// 查询归档 canister 的交易
+async fn fetch_archived_transaction_latest(
+    agent: &Agent,
+    archived: &ArchivedTransaction,
+) -> Result<Option<Transaction>, Box<dyn Error>> {
+    let archived_length: u64 = archived.length.0.to_u64().unwrap_or(0);
+    if archived_length == 0 {
+        return Ok(None);
+    }
+    let last_index = archived_length - 1;
+    let start = archived.start.clone() + candid::Nat::from(last_index);
+    let arg = GetTransactionsArg {
+        start,
+        length: candid::Nat::from(1u64),
+    };
+    let arg_bytes = Encode!(&arg)?;
+    let response = agent
+        .query(&archived.callback, "get_transactions")
+        .with_arg(arg_bytes)
+        .call()
+        .await?;
+    let archived_result: GetTransactionsResult = Decode!(&response, GetTransactionsResult)?;
+    Ok(archived_result.transactions.into_iter().next())
+}
+
+fn print_transaction(tx: &Transaction) {
+    println!("kind: {}", tx.kind);
+    println!("timestamp: {}", tx.timestamp);
+    if let Some(ref transfer) = tx.transfer {
+        println!("-- Transfer --");
+        println!("from: {}", transfer.from);
+        println!("to: {}", transfer.to);
+        println!("amount: {}", transfer.amount);
+        println!("fee: {:?}", transfer.fee);
+        println!("memo: {:?}", transfer.memo);
+        println!("created_at_time: {:?}", transfer.created_at_time);
+        println!("spender: {:?}", transfer.spender.as_ref().map(|a| a.to_string()));
+    }
+    if let Some(ref mint) = tx.mint {
+        println!("-- Mint --");
+        println!("to: {}", mint.to);
+        println!("amount: {}", mint.amount);
+        println!("memo: {:?}", mint.memo);
+        println!("created_at_time: {:?}", mint.created_at_time);
+    }
+    if let Some(ref approve) = tx.approve {
+        println!("-- Approve --");
+        println!("from: {}", approve.from);
+        println!("spender: {}", approve.spender);
+        println!("amount: {}", approve.amount);
+        println!("fee: {:?}", approve.fee);
+        println!("memo: {:?}", approve.memo);
+        println!("created_at_time: {:?}", approve.created_at_time);
+        println!("expected_allowance: {:?}", approve.expected_allowance);
+        println!("expires_at: {:?}", approve.expires_at);
+    }
+    if let Some(ref burn) = tx.burn {
+        println!("-- Burn --");
+        println!("from: {}", burn.from);
+        println!("amount: {}", burn.amount);
+        println!("memo: {:?}", burn.memo);
+        println!("created_at_time: {:?}", burn.created_at_time);
+        println!("spender: {:?}", burn.spender.as_ref().map(|a| a.to_string()));
+    }
+    if tx.transfer.is_none() && tx.mint.is_none() && tx.approve.is_none() && tx.burn.is_none() {
+        println!("No details.");
+    }
+}
+
+// 获取主 canister 和所有归档 canister的所有交易
+async fn fetch_all_transactions(
+    agent: &Agent,
+    canister_id: &Principal,
+) -> Result<Vec<Transaction>, Box<dyn Error>> {
+    // 1. 获取主 canister 的所有交易
+    let arg = GetTransactionsArg {
+        start: candid::Nat::from(0u64),
+        length: candid::Nat::from(u64::MAX),
+    };
+    let arg_bytes = Encode!(&arg)?;
+    let response = agent.query(canister_id, "get_transactions")
+        .with_arg(arg_bytes)
+        .call()
+        .await?;
+    let result: GetTransactionsResult = Decode!(&response, GetTransactionsResult)?;
+
+    let mut all_transactions = result.transactions;
+
+    // 2. 获取所有归档 canister 的交易
+    for archived in &result.archived_transactions {
+        let archived_length: u64 = archived.length.0.to_u64().unwrap_or(0);
+        if archived_length == 0 {
+            continue;
+        }
+        let arg = GetTransactionsArg {
+            start: archived.start.clone(),
+            length: archived.length.clone(),
+        };
+        let arg_bytes = Encode!(&arg)?;
+        let response = agent
+            .query(&archived.callback, "get_transactions")
+            .with_arg(arg_bytes)
+            .call()
+            .await?;
+        let archived_result: GetTransactionsResult = Decode!(&response, GetTransactionsResult)?;
+        all_transactions.extend(archived_result.transactions);
+    }
+
+    Ok(all_transactions)
 }
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn Error>> {
-    // 初始化日志系统
-    env_logger::init();
-
-    // 初始化 IC Agent
     let agent = Agent::builder()
-        .with_url("HTTPS://ic0.app")
+        .with_url("https://icp0.io")
         .build()?;
-    agent.fetch_root_key().await?;
 
-    // 设置 ledger canister ID
-    let ledger_canister_id = Principal::from_text("4c4fd-caaaa-aaaaq-aaa3a-cai")?;
+    let canister_id = Principal::from_text("4x2jw-rqaaa-aaaak-qufjq-cai")?;
 
-    // 初始化 MongoDB 连接
-    let client_options = ClientOptions::parse("mongodb://127.0.0.1:27017").await?;
-    let client = Client::with_options(client_options)?;
-    let db = client.database("ic_data");
-    let collection: Collection<LocalTransaction> = db.collection("transactions");
+    let all_transactions = fetch_all_transactions(&agent, &canister_id).await?;
 
-    // 创建唯一索引，按 tx_index 排序
-    let index_model = IndexModel::builder()
-        .keys(doc! { "tx_index": 1 })
-        .options(IndexOptions::builder().unique(true).build())
-        .build();
-    collection.create_index(index_model, None).await?;
-
-    // 获取数据库中最大的 tx_index
-    let last_doc = collection
-        .find_one(
-            doc! {},
-            mongodb::options::FindOneOptions::builder()
-                .sort(doc! { "tx_index": -1 })
-                .build(),
-        )
-        .await?;
-    let mut last_tx_index = last_doc.map_or(0, |doc| doc.tx_index + 1);
-
-    // 主循环：每秒同步一次交易数据
-    loop {
-        // 构造查询参数
-        let args = GetTransactionsArgs {
-            start: Nat::from(last_tx_index),
-            length: Nat::from(10_u64),
-        };
-
-        // 调用 get_transactions 函数
-        let response = match agent
-            .query(&ledger_canister_id, "get_transactions")
-            .with_arg(Encode!(&args)?)
-            .call()
-            .await
-        {
-            Ok(r) => r,
-            Err(e) => {
-                error!("Ledger canister query error: {:?}", e);
-                sleep(Duration::from_secs(1)).await;
-                continue;
-            }
-        };
-
-        // 解码返回结果
-        let transactions_result = match Decode!(response.as_slice(), GetTransactionsResult) {
-            Ok(r) => r,
-            Err(e) => {
-                error!("Decode transactions error: {:?}", e);
-                sleep(Duration::from_secs(1)).await;
-                continue;
-            }
-        };
-
-        // 处理交易数据
-        let mut printed_first = false;
-        for tx in transactions_result.transactions.iter() {
-            let transaction = LocalTransaction {
-                tx_index: tx.tx_index.0.to_u64().unwrap(),
-                timestamp: tx.timestamp.0.to_u64().unwrap(),
-                from_account: format_account(&tx.from),
-                to_account: format_account(&tx.to),
-                amount: tx.amount.0.to_u64().unwrap(),
-            };
-
-            // 打印获取到的第一条交易
-            if !printed_first {
-                println!("获取到的第一条交易: {:?}", transaction);
-                printed_first = true;
-            }
-
-            // 插入数据库（upsert 方式）
-            let filter = doc! { "tx_index": mongodb::bson::Bson::Int64(transaction.tx_index as i64) };
-            let update = doc! { "$setOnInsert": mongodb::bson::to_document(&transaction)? };
-            let res = collection
-                .update_one(
-                    filter,
-                    update,
-                    mongodb::options::UpdateOptions::builder().upsert(true).build(),
-                )
-                .await;
-            match res {
-                Ok(r) => {
-                    if r.upserted_id.is_some() {
-                        info!("Inserted tx_index {}", transaction.tx_index);
-                    }
-                }
-                Err(e) => error!("Insert error: {:?}", e),
-            }
-
-            // 更新 last_tx_index
-            last_tx_index = transaction.tx_index + 1;
+    if all_transactions.is_empty() {
+        println!("No transactions found.");
+    } else {
+        println!("All transactions ({}):", all_transactions.len());
+        for (i, tx) in all_transactions.iter().enumerate() {
+            println!("--- Transaction {} ---", i);
+            print_transaction(tx);
         }
-        sleep(Duration::from_secs(1)).await;
     }
+    Ok(())
 }
