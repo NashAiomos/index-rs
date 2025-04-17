@@ -52,7 +52,7 @@ let txs = get_account_transactions(&accounts_col, "principal:subaccount").await?
 
 每个账户在 `accounts` 集合中有一条文档，结构如下：
 
-```json
+```
 {
   "account": "principal:subaccount",
   "transactions": [ ... ] // 这个账户相关的所有交易
