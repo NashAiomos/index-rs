@@ -1,12 +1,14 @@
 use ic_agent::{Agent};
 use ic_agent::export::Principal;
 use candid::{Encode, Decode, CandidType};
-use serde::{Deserialize};
+use serde::{Deserialize, Serialize};
 use std::error::Error;
 use num_traits::ToPrimitive;
 use std::fmt;
 use std::collections::HashMap;
 use tokio::time::{interval, Duration};
+use mongodb::{Client, options::ClientOptions, Collection, bson::{doc, to_bson, Bson}};
+use futures::stream::StreamExt;
 
 // 定义参数结构体
 #[derive(CandidType, Deserialize)]
@@ -16,7 +18,7 @@ struct GetTransactionsArg {
 }
 
 // 定义返回结构体
-#[derive(CandidType, Deserialize, Debug, Clone)]
+#[derive(CandidType, Deserialize, Debug, Clone, Serialize)]
 struct Account {
     owner: Principal,
     subaccount: Option<Vec<u8>>,
@@ -43,7 +45,7 @@ impl fmt::Display for Account {
     }
 }
 
-#[derive(CandidType, Deserialize, Debug, Clone)]
+#[derive(CandidType, Deserialize, Debug, Clone, Serialize)]
 struct Transfer {
     to: Account,
     fee: Option<candid::Nat>,
@@ -54,7 +56,7 @@ struct Transfer {
     spender: Option<Account>,
 }
 
-#[derive(CandidType, Deserialize, Debug, Clone)]
+#[derive(CandidType, Deserialize, Debug, Clone, Serialize)]
 struct Mint {
     to: Account,
     amount: candid::Nat,
@@ -63,7 +65,7 @@ struct Mint {
     // ...其他字段...
 }
 
-#[derive(CandidType, Deserialize, Debug, Clone)]
+#[derive(CandidType, Deserialize, Debug, Clone, Serialize)]
 struct Approve {
     from: Account,
     spender: Account,
@@ -76,7 +78,7 @@ struct Approve {
     // ...其他字段...
 }
 
-#[derive(CandidType, Deserialize, Debug, Clone)]
+#[derive(CandidType, Deserialize, Debug, Clone, Serialize)]
 struct Burn {
     from: Account,
     amount: candid::Nat,
@@ -85,7 +87,7 @@ struct Burn {
     spender: Option<Account>,
 }
 
-#[derive(CandidType, Deserialize, Debug, Clone)]
+#[derive(CandidType, Deserialize, Debug, Clone, Serialize)]
 struct Transaction {
     #[serde(rename = "kind")]
     kind: String,
@@ -266,6 +268,13 @@ fn group_transactions_by_account(transactions: &[Transaction]) -> HashMap<String
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn Error>> {
+    // 初始化 MongoDB 客户端
+    let mongo_client = Client::with_options(
+        ClientOptions::parse("mongodb://localhost:27017").await?
+    )?;
+    let db = mongo_client.database("ledger_sync");
+    let accounts_col: Collection<mongodb::bson::Document> = db.collection("accounts");
+
     let agent = Agent::builder()
         .with_url("https://icp0.io")
         .build()?;
@@ -288,15 +297,19 @@ async fn main() -> Result<(), Box<dyn Error>> {
     }
     local_transactions.extend(all_transactions);
 
-    // 按账户索引所有本地交易并打印
+    // 按账户索引所有本地交易并存入 MongoDB
     let grouped = group_transactions_by_account(&local_transactions);
-    println!("All transactions grouped by account:");
     for (account, txs) in &grouped {
-        println!("Account: {}", account);
-        for tx in txs {
-            print_transaction(tx);
-        }
+        // 将交易序列化为 BSON
+        let txs_bson: Vec<Bson> = txs.iter().map(|tx| to_bson(tx).unwrap()).collect();
+        // upsert 到 MongoDB
+        accounts_col.update_one(
+            doc! { "account": account },
+            doc! { "$set": { "account": account, "transactions": &txs_bson } },
+            mongodb::options::UpdateOptions::builder().upsert(true).build()
+        ).await?;
     }
+    println!("All transactions grouped by account and saved to MongoDB.");
     println!("Total local transactions: {}", local_transactions.len());
 
     // 定时增量同步
@@ -334,15 +347,17 @@ async fn main() -> Result<(), Box<dyn Error>> {
             println!("Sync {} new transactions.", new_transactions.len());
             local_transactions.extend(new_transactions);
 
-            // 增量打印新同步的交易（可选：也可以重新分组打印全部）
+            // 增量同步到 MongoDB
             let grouped = group_transactions_by_account(&local_transactions);
-            println!("All transactions grouped by account:");
             for (account, txs) in &grouped {
-                println!("Account: {}", account);
-                for tx in txs {
-                    print_transaction(tx);
-                }
+                let txs_bson: Vec<Bson> = txs.iter().map(|tx| to_bson(tx).unwrap()).collect();
+                accounts_col.update_one(
+                    doc! { "account": account },
+                    doc! { "$set": { "account": account, "transactions": &txs_bson } },
+                    mongodb::options::UpdateOptions::builder().upsert(true).build()
+                ).await?;
             }
+            println!("All transactions grouped by account and saved to MongoDB.");
             println!("Total local transactions: {}", local_transactions.len());
         } else {
             println!("No new transactions.");

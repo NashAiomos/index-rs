@@ -7,6 +7,7 @@ edition = "2021"
 candid = "0.9"
 ic-agent = "0.30"
 mongodb = { version = "2.8", features = ["tokio-runtime"] }
+futures = "0.3"
 tokio = { version = "1.37", features = ["full"] }
 serde = { version = "1.0", features = ["derive"] }
 log = "0.4"
