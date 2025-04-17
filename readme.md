@@ -62,4 +62,3 @@ let txs = get_account_transactions(&accounts_col, "principal:subaccount").await?
   "transactions": [ ... ] // 这个账户相关的所有交易
 }
 ```
-
