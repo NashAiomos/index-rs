@@ -272,13 +272,39 @@ async fn main() -> Result<(), Box<dyn Error>> {
 
     let canister_id = Principal::from_text("4x2jw-rqaaa-aaaak-qufjq-cai")?;
     let mut seen_tx_ids = std::collections::HashSet::new();
+    let mut local_transactions: Vec<Transaction> = Vec::new();
 
+    // 首次同步所有交易
+    let all_transactions = fetch_all_transactions(&agent, &canister_id).await?;
+    for tx in &all_transactions {
+        let key = format!(
+            "{}-{}-{}-{}",
+            tx.kind,
+            tx.timestamp,
+            tx.transfer.as_ref().map(|t| t.from.to_string()).unwrap_or_default(),
+            tx.transfer.as_ref().map(|t| t.to.to_string()).unwrap_or_default()
+        );
+        seen_tx_ids.insert(key);
+    }
+    local_transactions.extend(all_transactions);
+
+    // 按账户索引所有本地交易并打印
+    let grouped = group_transactions_by_account(&local_transactions);
+    println!("All transactions grouped by account:");
+    for (account, txs) in &grouped {
+        println!("Account: {}", account);
+        for tx in txs {
+            print_transaction(tx);
+        }
+    }
+    println!("Total local transactions: {}", local_transactions.len());
+
+    // 定时增量同步
     let mut interval = interval(Duration::from_secs(1));
     loop {
         interval.tick().await;
 
         let all_transactions = fetch_all_transactions(&agent, &canister_id).await?;
-        // 只处理未见过的新交易
         let new_transactions: Vec<Transaction> = all_transactions.iter()
             .filter(|tx| {
                 let key = format!(
@@ -304,18 +330,22 @@ async fn main() -> Result<(), Box<dyn Error>> {
             seen_tx_ids.insert(key);
         }
 
-        if new_transactions.is_empty() {
-            println!("No new transactions.");
-            continue;
-        }
+        if !new_transactions.is_empty() {
+            println!("Sync {} new transactions.", new_transactions.len());
+            local_transactions.extend(new_transactions);
 
-        let grouped = group_transactions_by_account(&new_transactions);
-        println!("Grouped new transactions by account:");
-        for (account, txs) in &grouped {
-            println!("Account: {}", account);
-            for tx in txs {
-                print_transaction(tx);
+            // 增量打印新同步的交易（可选：也可以重新分组打印全部）
+            let grouped = group_transactions_by_account(&local_transactions);
+            println!("All transactions grouped by account:");
+            for (account, txs) in &grouped {
+                println!("Account: {}", account);
+                for tx in txs {
+                    print_transaction(tx);
+                }
             }
+            println!("Total local transactions: {}", local_transactions.len());
+        } else {
+            println!("No new transactions.");
         }
     }
 }
