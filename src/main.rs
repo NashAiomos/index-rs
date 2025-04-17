@@ -9,6 +9,7 @@ use std::collections::HashMap;
 use tokio::time::{interval, Duration};
 use mongodb::{Client, options::ClientOptions, Collection, bson::{doc, to_bson, Bson}};
 use futures::stream::StreamExt;
+use mongodb::bson::Document;
 
 // 定义参数结构体
 #[derive(CandidType, Deserialize)]
@@ -62,7 +63,6 @@ struct Mint {
     amount: candid::Nat,
     memo: Option<Vec<u8>>,
     created_at_time: Option<u64>,
-    // ...其他字段...
 }
 
 #[derive(CandidType, Deserialize, Debug, Clone, Serialize)]
@@ -75,7 +75,6 @@ struct Approve {
     created_at_time: Option<u64>,
     expected_allowance: Option<candid::Nat>,
     expires_at: Option<u64>,
-    // ...其他字段...
 }
 
 #[derive(CandidType, Deserialize, Debug, Clone, Serialize)]
@@ -101,8 +100,6 @@ struct Transaction {
     approve: Option<Approve>,
     #[serde(rename = "burn")]
     burn: Option<Burn>,
-    // candid 里有的变体都要加上，字段名全部小写
-    // ...其他字段...
 }
 
 #[derive(CandidType, Deserialize, Debug)]
@@ -145,56 +142,12 @@ async fn fetch_archived_transaction_latest(
     Ok(archived_result.transactions.into_iter().next())
 }
 
-fn print_transaction(tx: &Transaction) {
-    println!("kind: {}", tx.kind);
-    println!("timestamp: {}", tx.timestamp);
-    if let Some(ref transfer) = tx.transfer {
-        println!("-- Transfer --");
-        println!("from: {}", transfer.from);
-        println!("to: {}", transfer.to);
-        println!("amount: {}", transfer.amount);
-        println!("fee: {:?}", transfer.fee);
-        println!("memo: {:?}", transfer.memo);
-        println!("created_at_time: {:?}", transfer.created_at_time);
-        println!("spender: {:?}", transfer.spender.as_ref().map(|a| a.to_string()));
-    }
-    if let Some(ref mint) = tx.mint {
-        println!("-- Mint --");
-        println!("to: {}", mint.to);
-        println!("amount: {}", mint.amount);
-        println!("memo: {:?}", mint.memo);
-        println!("created_at_time: {:?}", mint.created_at_time);
-    }
-    if let Some(ref approve) = tx.approve {
-        println!("-- Approve --");
-        println!("from: {}", approve.from);
-        println!("spender: {}", approve.spender);
-        println!("amount: {}", approve.amount);
-        println!("fee: {:?}", approve.fee);
-        println!("memo: {:?}", approve.memo);
-        println!("created_at_time: {:?}", approve.created_at_time);
-        println!("expected_allowance: {:?}", approve.expected_allowance);
-        println!("expires_at: {:?}", approve.expires_at);
-    }
-    if let Some(ref burn) = tx.burn {
-        println!("-- Burn --");
-        println!("from: {}", burn.from);
-        println!("amount: {}", burn.amount);
-        println!("memo: {:?}", burn.memo);
-        println!("created_at_time: {:?}", burn.created_at_time);
-        println!("spender: {:?}", burn.spender.as_ref().map(|a| a.to_string()));
-    }
-    if tx.transfer.is_none() && tx.mint.is_none() && tx.approve.is_none() && tx.burn.is_none() {
-        println!("No details.");
-    }
-}
-
 // 获取主 canister 和所有归档 canister的所有交易
 async fn fetch_all_transactions(
     agent: &Agent,
     canister_id: &Principal,
 ) -> Result<Vec<Transaction>, Box<dyn Error>> {
-    // 1. 获取主 canister 的所有交易
+    // 获取主 canister 的所有交易
     let arg = GetTransactionsArg {
         start: candid::Nat::from(0u64),
         length: candid::Nat::from(u64::MAX),
@@ -208,7 +161,7 @@ async fn fetch_all_transactions(
 
     let mut all_transactions = result.transactions;
 
-    // 2. 获取所有归档 canister 的交易
+    // 获取所有归档 canister 的交易
     for archived in &result.archived_transactions {
         let archived_length: u64 = archived.length.0.to_u64().unwrap_or(0);
         if archived_length == 0 {
@@ -266,9 +219,30 @@ fn group_transactions_by_account(transactions: &[Transaction]) -> HashMap<String
     map
 }
 
+/// 查询某账户下的所有交易
+async fn get_account_transactions(
+    accounts_col: &Collection<Document>,
+    account: &str,
+) -> Result<Vec<Transaction>, Box<dyn Error>> {
+    if let Some(doc) = accounts_col
+        .find_one(doc! { "account": account }, None)
+        .await?
+    {
+        if let Some(transactions_bson) = doc.get_array("transactions").ok() {
+            let mut txs = Vec::new();
+            for tx_bson in transactions_bson {
+                let tx: Transaction = mongodb::bson::from_bson(tx_bson.clone())?;
+                txs.push(tx);
+            }
+            return Ok(txs);
+        }
+    }
+    Ok(Vec::new())
+}
+
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn Error>> {
-    // 初始化 MongoDB 客户端
+    // 初始化 MongoDB
     let mongo_client = Client::with_options(
         ClientOptions::parse("mongodb://localhost:27017").await?
     )?;
