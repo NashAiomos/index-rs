@@ -1,4 +1,5 @@
 # index-rs
+
 `index-rs` 是一个用于同步和索引 Internet Computer (IC) 账本 Canister 交易的 Rust 工具。
 
 它会每秒拉取主账本及归档 Canister 的所有交易，然后按账户分组存储到 MongoDB 数据库中，便于后续查询和分析。
@@ -33,7 +34,7 @@ let txs = get_account_transactions(&accounts_col, "principal:subaccount").await?
 - 默认同步的 Canister ID 为 `4x2jw-rqaaa-aaaak-qufjq-cai`，更换 canister id 在 `main.rs` 中修改。
 - MongoDB 连接字符串可在 `main.rs` 顶部修改。
 
-## 主要结构说明
+## 主要结构
 
 - `main.rs`：核心逻辑，包括交易同步、分组、存储与查询。
 - 结构体定义：
@@ -61,12 +62,3 @@ let txs = get_account_transactions(&accounts_col, "principal:subaccount").await?
 }
 ```
 
-## 依赖环境
-
-- Rust 2021
-- MongoDB 数据库（本地或远程）
-- 依赖库见 `Cargo.toml`，主要包括：
-  - `ic-agent`、`candid`（与 IC 通信）
-  - `mongodb`（数据库操作）
-  - `tokio`、`futures`（异步运行时）
-  - `serde`、`hex`、`num-traits` 
