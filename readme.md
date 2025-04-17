@@ -7,19 +7,20 @@
 ## 构建与运行
 
 1. **安装依赖**
+
    ```bash
    cargo build
    ```
 
 2. **启动 MongoDB**
-   - 默认连接到 `mongodb://localhost:27017`，数据库名为 `ledger_sync`。
+
+   - 默认连接 `mongodb://localhost:27017`，数据库名 `ledger_sync`。
 
 3. **运行项目**
+
    ```bash
    cargo run
    ```
-
-   程序会自动同步所有交易并持续增量更新。
 
 ## 查询接口示例
 
