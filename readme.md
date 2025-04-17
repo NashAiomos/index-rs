@@ -32,7 +32,7 @@ let txs = get_account_transactions(&accounts_col, "principal:subaccount").await?
 
 ## 配置说明
 
-- 默认同步的 Canister ID 为 `4x2jw-rqaaa-aaaak-qufjq-cai`，更换 canister id 在 `main.rs` 中修改。
+- 默认同步的 Canister ID 为 `4x2jw-rqaaa-aaaak-qufjq-cai`，更换 Canister ID 在 `main.rs` 中修改。
 - MongoDB 连接字符串可在 `main.rs` 顶部修改。
 
 ## 主要结构
