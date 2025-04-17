@@ -1,7 +1,4 @@
 # index-rs
-
-## 项目简介
-
 `index-rs` 是一个用于同步和索引 Internet Computer (IC) 账本 Canister 交易的 Rust 工具。它会定期拉取主账本及归档 Canister 的所有交易，并按账户分组存储到 MongoDB 数据库中，便于后续查询和分析。
 
 ## 功能特性
