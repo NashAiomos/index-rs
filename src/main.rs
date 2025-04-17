@@ -5,6 +5,8 @@ use serde::{Deserialize};
 use std::error::Error;
 use num_traits::ToPrimitive;
 use std::fmt;
+use std::collections::HashMap;
+use tokio::time::{interval, Duration};
 
 // 定义参数结构体
 #[derive(CandidType, Deserialize)]
@@ -14,7 +16,7 @@ struct GetTransactionsArg {
 }
 
 // 定义返回结构体
-#[derive(CandidType, Deserialize, Debug)]
+#[derive(CandidType, Deserialize, Debug, Clone)]
 struct Account {
     owner: Principal,
     subaccount: Option<Vec<u8>>,
@@ -41,7 +43,7 @@ impl fmt::Display for Account {
     }
 }
 
-#[derive(CandidType, Deserialize, Debug)]
+#[derive(CandidType, Deserialize, Debug, Clone)]
 struct Transfer {
     to: Account,
     fee: Option<candid::Nat>,
@@ -52,7 +54,7 @@ struct Transfer {
     spender: Option<Account>,
 }
 
-#[derive(CandidType, Deserialize, Debug)]
+#[derive(CandidType, Deserialize, Debug, Clone)]
 struct Mint {
     to: Account,
     amount: candid::Nat,
@@ -61,7 +63,7 @@ struct Mint {
     // ...其他字段...
 }
 
-#[derive(CandidType, Deserialize, Debug)]
+#[derive(CandidType, Deserialize, Debug, Clone)]
 struct Approve {
     from: Account,
     spender: Account,
@@ -74,7 +76,7 @@ struct Approve {
     // ...其他字段...
 }
 
-#[derive(CandidType, Deserialize, Debug)]
+#[derive(CandidType, Deserialize, Debug, Clone)]
 struct Burn {
     from: Account,
     amount: candid::Nat,
@@ -83,7 +85,7 @@ struct Burn {
     spender: Option<Account>,
 }
 
-#[derive(CandidType, Deserialize, Debug)]
+#[derive(CandidType, Deserialize, Debug, Clone)]
 struct Transaction {
     #[serde(rename = "kind")]
     kind: String,
@@ -227,6 +229,41 @@ async fn fetch_all_transactions(
     Ok(all_transactions)
 }
 
+fn group_transactions_by_account(transactions: &[Transaction]) -> HashMap<String, Vec<&Transaction>> {
+    let mut map: HashMap<String, Vec<&Transaction>> = HashMap::new();
+    for tx in transactions {
+        // 收集所有相关账户
+        let mut accounts = Vec::new();
+        if let Some(ref transfer) = tx.transfer {
+            accounts.push(transfer.from.to_string());
+            accounts.push(transfer.to.to_string());
+            if let Some(ref spender) = transfer.spender {
+                accounts.push(spender.to_string());
+            }
+        }
+        if let Some(ref mint) = tx.mint {
+            accounts.push(mint.to.to_string());
+        }
+        if let Some(ref approve) = tx.approve {
+            accounts.push(approve.from.to_string());
+            accounts.push(approve.spender.to_string());
+        }
+        if let Some(ref burn) = tx.burn {
+            accounts.push(burn.from.to_string());
+            if let Some(ref spender) = burn.spender {
+                accounts.push(spender.to_string());
+            }
+        }
+        // 去重
+        accounts.sort();
+        accounts.dedup();
+        for acc in accounts {
+            map.entry(acc).or_default().push(tx);
+        }
+    }
+    map
+}
+
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn Error>> {
     let agent = Agent::builder()
@@ -234,17 +271,51 @@ async fn main() -> Result<(), Box<dyn Error>> {
         .build()?;
 
     let canister_id = Principal::from_text("4x2jw-rqaaa-aaaak-qufjq-cai")?;
+    let mut seen_tx_ids = std::collections::HashSet::new();
 
-    let all_transactions = fetch_all_transactions(&agent, &canister_id).await?;
+    let mut interval = interval(Duration::from_secs(1));
+    loop {
+        interval.tick().await;
 
-    if all_transactions.is_empty() {
-        println!("No transactions found.");
-    } else {
-        println!("All transactions ({}):", all_transactions.len());
-        for (i, tx) in all_transactions.iter().enumerate() {
-            println!("--- Transaction {} ---", i);
-            print_transaction(tx);
+        let all_transactions = fetch_all_transactions(&agent, &canister_id).await?;
+        // 只处理未见过的新交易
+        let new_transactions: Vec<Transaction> = all_transactions.iter()
+            .filter(|tx| {
+                let key = format!(
+                    "{}-{}-{}-{}",
+                    tx.kind,
+                    tx.timestamp,
+                    tx.transfer.as_ref().map(|t| t.from.to_string()).unwrap_or_default(),
+                    tx.transfer.as_ref().map(|t| t.to.to_string()).unwrap_or_default()
+                );
+                !seen_tx_ids.contains(&key)
+            })
+            .cloned()
+            .collect();
+
+        for tx in &new_transactions {
+            let key = format!(
+                "{}-{}-{}-{}",
+                tx.kind,
+                tx.timestamp,
+                tx.transfer.as_ref().map(|t| t.from.to_string()).unwrap_or_default(),
+                tx.transfer.as_ref().map(|t| t.to.to_string()).unwrap_or_default()
+            );
+            seen_tx_ids.insert(key);
+        }
+
+        if new_transactions.is_empty() {
+            println!("No new transactions.");
+            continue;
+        }
+
+        let grouped = group_transactions_by_account(&new_transactions);
+        println!("Grouped new transactions by account:");
+        for (account, txs) in &grouped {
+            println!("Account: {}", account);
+            for tx in txs {
+                print_transaction(tx);
+            }
         }
     }
-    Ok(())
 }
