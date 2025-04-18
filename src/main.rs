@@ -173,7 +173,7 @@ struct SimpleTransaction {
     pub approve: Option<Approve>,
 }
 
-// 最简单的交易数组
+// 交易数组
 #[derive(CandidType, Deserialize, Debug)]
 struct TransactionList(Vec<Transaction>);
 
