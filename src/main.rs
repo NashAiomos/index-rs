@@ -12,6 +12,8 @@ use crate::config::{load_config, parse_args, parse_canister_id, create_agent, ge
 use crate::db::{init_db, create_indexes};
 use crate::sync::{sync_ledger_transactions, sync_archive_transactions};
 use crate::sync::admin::{reset_and_sync_all_transactions, calculate_all_balances};
+use crate::db::balances::calculate_incremental_balances;
+use crate::models::Transaction;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn Error>> {
@@ -79,13 +81,12 @@ async fn run_application() -> Result<(), Box<dyn Error>> {
         return Ok(());
     }
     
-    // 正常模式：采用两阶段同步方式
-    // 阶段1：只同步交易数据，不计算余额
+    // 正常模式：先同步所有交易，再统一计算余额
     println!("阶段1：同步所有交易数据...");
     
     // 先同步归档数据
-    sync_archive_transactions(
-            &agent,
+    let archives_result = sync_archive_transactions(
+        &agent,
         &canister_id, 
         &db_conn.tx_col, 
         &db_conn.accounts_col, 
@@ -96,21 +97,23 @@ async fn run_application() -> Result<(), Box<dyn Error>> {
     
     // 同步主账本数据
     println!("开始同步ledger交易...");
-    if let Err(e) = sync_ledger_transactions(
-                            &agent,
+    let ledger_txs = if let Ok(txs) = sync_ledger_transactions(
+        &agent,
         &canister_id, 
         &db_conn.tx_col, 
         &db_conn.accounts_col, 
         &db_conn.balances_col, 
         token_decimals,
         false // 不计算余额
-                        ).await {
-        eprintln!("同步ledger交易时发生错误: {}", e);
-        // 不返回错误，继续执行后续逻辑
-    }
+    ).await {
+        txs
+    } else {
+        eprintln!("同步ledger交易时发生错误，继续执行后续逻辑");
+        Vec::new()
+    };
     
-    // 阶段2：从数据库读取所有交易并按索引顺序计算余额
-    println!("阶段2：按交易索引顺序计算余额...");
+    // 阶段2：使用新算法根据账户交易记录计算余额
+    println!("阶段2：根据账户交易记录统一计算余额...");
     calculate_all_balances(&db_conn, token_decimals).await?;
     
     println!("初始同步和余额计算完成，开始实时监控新交易");
@@ -125,7 +128,7 @@ async fn run_application() -> Result<(), Box<dyn Error>> {
         
         println!("\n执行定时增量同步...");
         
-        // 增量同步时直接计算余额
+        // 增量同步交易数据
         match sync_ledger_transactions(
             &agent, 
             &canister_id, 
@@ -133,11 +136,32 @@ async fn run_application() -> Result<(), Box<dyn Error>> {
             &db_conn.accounts_col, 
             &db_conn.balances_col, 
             token_decimals,
-            true // 增量同步时计算余额
+            false // 增量同步时不再实时计算余额
         ).await {
-            Ok(_) => {
-                println!("定时增量同步完成");
-                consecutive_errors = 0; // 重置错误计数
+            Ok(new_transactions) => {
+                // 同步完成后，只计算新交易相关账户的余额
+                if !new_transactions.is_empty() {
+                    println!("增量同步获取到 {} 笔新交易，计算相关账户余额...", new_transactions.len());
+                    match calculate_incremental_balances(
+                        &new_transactions,
+                        &db_conn.tx_col,
+                        &db_conn.accounts_col,
+                        &db_conn.balances_col,
+                        token_decimals
+                    ).await {
+                        Ok((success, error)) => {
+                            println!("增量余额计算完成: 更新了 {} 个账户, 失败 {} 个账户", success, error);
+                            consecutive_errors = 0; // 重置错误计数
+                        },
+                        Err(e) => {
+                            eprintln!("增量计算余额时出错: {}", e);
+                            consecutive_errors += 1;
+                        }
+                    }
+                } else {
+                    println!("没有获取到新交易，跳过余额计算");
+                    consecutive_errors = 0; // 重置错误计数
+                }
             },
             Err(e) => {
                 consecutive_errors += 1;

@@ -7,9 +7,8 @@ use crate::db::transactions::get_latest_transaction_index;
 use crate::blockchain::{get_first_transaction_index, fetch_ledger_transactions};
 use crate::db::transactions::save_transaction;
 use crate::db::accounts::save_account_transaction;
-use crate::db::balances::process_batch_balances;
 use crate::utils::group_transactions_by_account;
-use crate::models::BATCH_SIZE;
+use crate::models::{Transaction, BATCH_SIZE};
 
 /// 直接使用已知的交易起点和偏移量查询数据
 pub async fn sync_ledger_transactions(
@@ -17,10 +16,10 @@ pub async fn sync_ledger_transactions(
     canister_id: &Principal,
     tx_col: &Collection<Document>,
     accounts_col: &Collection<Document>,
-    balances_col: &Collection<Document>,
-    token_decimals: u8,
-    calculate_balance: bool, // 是否计算余额
-) -> Result<(), Box<dyn Error>> {
+    _balances_col: &Collection<Document>,
+    _token_decimals: u8,
+    _calculate_balance: bool, // 是否计算余额 - 保留参数但已不再使用
+) -> Result<Vec<Transaction>, Box<dyn Error>> {
     // 获取数据库里面最新的交易索引
     let latest_index = match get_latest_transaction_index(tx_col).await {
         Ok(Some(index)) => {
@@ -54,6 +53,9 @@ pub async fn sync_ledger_transactions(
     let max_retries = 3;
     let mut consecutive_empty = 0;
     let max_consecutive_empty = 2; // 连续空结果次数阈值
+    
+    // 收集所有同步到的新交易
+    let mut all_new_transactions = Vec::new();
     
     // 尝试同步交易，每次获取一批
     while retry_count < max_retries && consecutive_empty < max_consecutive_empty {
@@ -106,18 +108,22 @@ pub async fn sync_ledger_transactions(
                 let mut sorted_transactions = transactions.clone();
                 sorted_transactions.sort_by_key(|tx| tx.index.unwrap_or(0));
                 
-                // 保存交易到数据库
+                // 保存交易到数据库并收集成功保存的交易
                 let mut success_count = 0;
                 let mut error_count = 0;
+                
                 for tx in &sorted_transactions {
                     // 保存交易
                     match save_transaction(tx_col, tx).await {
                         Ok(_) => {
                             success_count += 1;
+                            // 收集成功保存的交易，用于后续余额计算
+                            let tx_clone = tx.clone();
+                            all_new_transactions.push(tx_clone);
+                            
                             // 更新账户-交易关系
                             let index = tx.index.unwrap_or(0);
-                            let tx_clone = tx.clone();
-                            let tx_array = vec![tx_clone];
+                            let tx_array = vec![tx.clone()];
                             let account_txs = group_transactions_by_account(&tx_array);
                             
                             for (account, _) in &account_txs {
@@ -136,21 +142,8 @@ pub async fn sync_ledger_transactions(
                 
                 println!("成功保存 {} 笔交易，失败 {} 笔", success_count, error_count);
                 
-                // 根据参数决定是否处理余额
-                if calculate_balance {
-                    println!("处理余额更新...");
-                    // 处理这批交易的余额更新
-                    match process_batch_balances(balances_col, &sorted_transactions, token_decimals).await {
-                        Ok((success, error)) => {
-                            println!("余额更新: 成功处理 {} 笔交易, 失败 {} 笔", success, error);
-                        },
-                        Err(e) => {
-                            println!("批量处理余额更新失败: {}", e);
-                        }
-                    }
-                } else {
-                    println!("跳过余额计算");
-                }
+                // 不再需要在此处计算余额，由新算法统一计算
+                println!("跳过余额计算（将使用增量余额计算算法）");
                 
                 // 更新当前索引并重置重试计数
                 current_index += transactions.len() as u64;
@@ -183,6 +176,6 @@ pub async fn sync_ledger_transactions(
         println!("连续 {} 次获取空结果，认为已达到链上最新状态", consecutive_empty);
     }
     
-    println!("交易同步完成，当前索引: {}", current_index - 1);
-    Ok(())
+    println!("交易同步完成，当前索引: {}, 共同步 {} 笔新交易", current_index - 1, all_new_transactions.len());
+    Ok(all_new_transactions)
 } 

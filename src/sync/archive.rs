@@ -7,9 +7,8 @@ use mongodb::{Collection, bson::Document};
 use crate::blockchain::{fetch_archives, fetch_archive_transactions};
 use crate::db::transactions::save_transaction;
 use crate::db::accounts::save_account_transaction;
-use crate::db::balances::process_batch_balances;
 use crate::utils::group_transactions_by_account;
-use crate::models::{ArchiveInfo, ARCHIVE_BATCH_SIZE};
+use crate::models::{ArchiveInfo, Transaction, ARCHIVE_BATCH_SIZE};
 
 /// 同步归档canister的交易数据
 pub async fn sync_archive_transactions(
@@ -17,23 +16,26 @@ pub async fn sync_archive_transactions(
     canister_id: &Principal,
     tx_col: &Collection<Document>,
     accounts_col: &Collection<Document>,
-    balances_col: &Collection<Document>,
+    _balances_col: &Collection<Document>,
     token_decimals: u8,
-    calculate_balance: bool, // 是否计算余额
-) -> Result<(), Box<dyn Error>> {
+    _calculate_balance: bool, // 是否计算余额 - 保留参数但已不再使用
+) -> Result<Vec<Transaction>, Box<dyn Error>> {
     println!("获取归档信息...");
     let archives = match fetch_archives(&agent, &canister_id).await {
         Ok(a) => a,
         Err(e) => {
             println!("获取归档信息失败: {}，跳过归档处理", e);
-            return Ok(());
+            return Ok(Vec::new());
         }
     };
+    
+    // 收集所有同步的交易
+    let mut all_synced_transactions = Vec::new();
     
     if archives.is_empty() {
         println!("没有找到归档信息");
         println!("交易都存在 ledger canister 里。跳过归档canister，直接查询ledger canister。");
-        return Ok(());
+        return Ok(Vec::new());
     }
     
     // 打印归档信息
@@ -46,6 +48,8 @@ pub async fn sync_archive_transactions(
         );
     }
     
+    println!("发现 {} 个归档 canister，将依次同步", archives.len());
+    
     // 按区块范围起始位置对归档进行排序，确保按时间顺序处理
     let mut sorted_archives = archives.clone();
     sorted_archives.sort_by(|a, b| {
@@ -54,21 +58,31 @@ pub async fn sync_archive_transactions(
     
     // 处理所有找到的归档
     for (idx, archive_info) in sorted_archives.iter().enumerate() {
-        process_single_archive(
+        let archive_transactions = match process_single_archive(
             agent,
             archive_info,
             idx + 1,
             sorted_archives.len(),
             tx_col,
             accounts_col,
-            balances_col,
-            token_decimals,
-            calculate_balance
-        ).await?;
+            token_decimals
+        ).await {
+            Ok(txs) => txs,
+            Err(e) => {
+                println!("处理归档 {}/{} 失败: {}, 继续处理下一个归档", 
+                         idx + 1, sorted_archives.len(), e);
+                Vec::new()
+            }
+        };
+        
+        // 收集同步到的交易
+        all_synced_transactions.extend(archive_transactions);
+        
+        println!("已处理 {}/{} 个归档 canister", idx + 1, sorted_archives.len());
     }
     
-    println!("\n所有归档处理完毕");
-    Ok(())
+    println!("\n所有归档处理完毕，共同步 {} 笔交易", all_synced_transactions.len());
+    Ok(all_synced_transactions)
 }
 
 /// 处理单个归档canister
@@ -79,16 +93,17 @@ async fn process_single_archive(
     total: usize,
     tx_col: &Collection<Document>,
     accounts_col: &Collection<Document>,
-    balances_col: &Collection<Document>,
-    token_decimals: u8,
-    calculate_balance: bool, // 是否计算余额
-) -> Result<(), Box<dyn Error>> {
+    _token_decimals: u8,
+) -> Result<Vec<Transaction>, Box<dyn Error>> {
     println!("\n处理归档 {}/{}: canister_id={}", index, total, archive_info.canister_id);
     let archive_canister_id = &archive_info.canister_id;
     let block_range_start = archive_info.block_range_start.0.to_u64().unwrap_or(0);
     let block_range_end = archive_info.block_range_end.0.to_u64().unwrap_or(0);
     
     println!("归档范围: {}-{}", block_range_start, block_range_end);
+    
+    // 用于收集同步到的交易
+    let mut synced_transactions = Vec::new();
     
     // 先测试单个交易的解码
     match fetch_archive_transactions(
@@ -100,7 +115,7 @@ async fn process_single_archive(
         Ok(test_transactions) => {
             if test_transactions.is_empty() {
                 println!("无法从归档canister获取交易，跳过此归档");
-                return Ok(());
+                return Ok(Vec::new());
             }
             
             println!("测试获取交易成功，开始批量同步...");
@@ -152,12 +167,15 @@ async fn process_single_archive(
                         
                         // 保存交易到数据库
                         let mut success_count = 0;
-                        let mut error_count = 0;
+                        let mut save_error_count = 0;
                         
                         for tx in &sorted_transactions {
                             match save_transaction(tx_col, tx).await {
                                 Ok(_) => {
                                     success_count += 1;
+                                    
+                                    // 收集成功保存的交易，用于后续余额计算
+                                    synced_transactions.push(tx.clone());
                                     
                                     let index = tx.index.unwrap_or(0);
                                     let tx_clone = tx.clone();
@@ -165,72 +183,53 @@ async fn process_single_archive(
                                     let account_txs = group_transactions_by_account(&tx_array);
                                     
                                     for (account, _) in &account_txs {
-                                        if let Err(e) = save_account_transaction(&accounts_col, account, index).await {
+                                        if let Err(e) = save_account_transaction(accounts_col, account, index).await {
                                             println!("保存账户-交易关系失败: {}", e);
-                                            error_count += 1;
+                                            save_error_count += 1;
                                         }
                                     }
                                 },
                                 Err(e) => {
                                     println!("保存交易失败: {}", e);
-                                    error_count += 1;
+                                    save_error_count += 1;
                                 }
                             }
                         }
                         
-                        println!("保存结果: 成功={}, 失败={}", success_count, error_count);
+                        println!("保存结果: 成功={}, 失败={}", success_count, save_error_count);
                         
-                        // 根据参数决定是否处理余额
-                        if calculate_balance {
-                            println!("处理余额更新...");
-                            // 处理这批交易的余额更新
-                            match process_batch_balances(&balances_col, &sorted_transactions, token_decimals).await {
-                                Ok((success, error)) => {
-                                    println!("余额更新: 成功处理 {} 笔交易, 失败 {} 笔", success, error);
-                                },
-                                Err(e) => {
-                                    println!("批量处理余额更新失败: {}", e);
-                                }
-                            }
-                        } else {
-                            println!("跳过余额计算");
-                        }
+                        // 不再需要在此处计算余额，由新算法统一计算
+                        println!("跳过余额计算（将使用增量余额计算算法）");
                         
                         // 推进索引，确保即使获取数量少于请求数量也能正确前进
                         current_start += num_fetched as u64;
                         
-                        // 检查是否已到达归档末尾
-                        if (num_fetched as u64) < current_length {
-                            println!("获取的交易数量少于请求数量，可能已达归档末尾");
-                            break;
-                        }
+                        // 减轻系统负担，短暂休息
+                        tokio::time::sleep(Duration::from_millis(100)).await;
                     },
                     Err(e) => {
+                        println!("获取归档交易失败: {}", e);
                         error_count += 1;
-                        println!("获取归档交易失败 ({}/{}): {}", 
-                            error_count, max_consecutive_errors, e);
                         
                         if error_count >= max_consecutive_errors {
-                            println!("连续错误次数达到上限，中止此归档处理");
+                            println!("连续错误次数达到上限，跳过剩余部分");
                             break;
                         }
                         
-                        println!("短暂休眠后尝试跳过此批次...");
-                        tokio::time::sleep(Duration::from_secs(5)).await;
-                        current_start += current_length;
+                        // 指数退避等待
+                        let wait_time = Duration::from_secs(2u64.pow(error_count as u32));
+                        println!("等待 {:?} 后重试", wait_time);
+                        tokio::time::sleep(wait_time).await;
                     }
                 }
-                
-                // 在批次之间添加短暂延迟
-                tokio::time::sleep(Duration::from_millis(200)).await;
             }
-            
-            println!("归档 {} 处理完成", archive_canister_id);
-            Ok(())
         },
         Err(e) => {
-            println!("测试获取归档交易失败: {}, 跳过此归档", e);
-            Ok(())
+            println!("测试访问归档canister失败: {}", e);
+            return Ok(Vec::new());
         }
     }
+    
+    println!("归档 {} 处理完成，同步了 {} 笔交易", archive_info.canister_id, synced_transactions.len());
+    Ok(synced_transactions)
 } 

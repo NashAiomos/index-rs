@@ -1,20 +1,14 @@
 use std::error::Error;
 use ic_agent::Agent;
 use ic_agent::export::Principal;
-use mongodb::bson::Document;
-use mongodb::bson::doc;
-use mongodb::Cursor;
-use futures::StreamExt;
 use crate::db::transactions::clear_transactions;
 use crate::db::accounts::clear_accounts;
-use crate::db::balances::clear_balances;
+use crate::db::balances::{clear_balances, calculate_all_balances as calc_balances};
 use crate::db::create_indexes;
 use crate::db::DbConnection;
 use crate::sync::archive::sync_archive_transactions;
 use crate::sync::ledger::sync_ledger_transactions;
 use crate::blockchain::get_first_transaction_index;
-use crate::models::Transaction;
-use crate::db::balances::process_batch_balances;
 
 /// 重置数据库并完全重新同步所有交易
 /// 
@@ -83,78 +77,35 @@ pub async fn reset_and_sync_all_transactions(
     ).await?;
     
     // 第二阶段：从数据库读取所有交易，按索引排序后进行余额计算
-    println!("\n第二阶段：按交易索引顺序计算余额...");
+    println!("\n第二阶段：根据账户信息计算余额...");
     calculate_all_balances(db_conn, token_decimals).await?;
     
-    println!("数据库重置和交易同步完成，所有账户余额已根据交易索引顺序重新计算！");
+    println!("数据库重置和交易同步完成，所有账户余额已根据交易记录重新计算！");
     Ok(())
 }
 
-/// 从数据库读取所有交易，按索引排序后统一计算余额
+/// 从数据库读取所有账户关联的交易，计算每个账户的余额
 pub async fn calculate_all_balances(
     db_conn: &DbConnection,
     token_decimals: u8,
 ) -> Result<(), Box<dyn Error>> {
-    // 清空当前余额集合
-    println!("清空当前余额集合，准备按索引顺序重新计算...");
-    clear_balances(&db_conn.balances_col).await?;
+    println!("开始使用新算法计算所有账户余额...");
     
-    // 从数据库中按索引顺序读取所有交易
-    println!("从数据库读取所有交易...");
-    let mut cursor = db_conn.tx_col.find(doc! {}, None).await?;
-    
-    let mut transactions = Vec::new();
-    
-    // 将所有交易加载到内存
-    while let Some(result) = cursor.next().await {
-        match result {
-            Ok(doc) => {
-                match mongodb::bson::from_document::<Transaction>(doc) {
-                    Ok(tx) => {
-                        transactions.push(tx);
-                    },
-                    Err(e) => {
-                        println!("解析交易文档失败: {}", e);
-                    }
-                }
-            },
-            Err(e) => {
-                println!("读取交易文档失败: {}", e);
-            }
+    match calc_balances(
+        &db_conn.accounts_col,
+        &db_conn.tx_col,
+        &db_conn.balances_col,
+        token_decimals
+    ).await {
+        Ok((success, error)) => {
+            println!("余额计算完成: 成功处理 {} 个账户, 失败 {} 个账户", success, error);
+        },
+        Err(e) => {
+            println!("余额计算过程中发生错误: {}", e);
+            return Err(e);
         }
     }
     
-    println!("读取到 {} 笔交易，开始按索引排序...", transactions.len());
-    
-    // 确保按索引顺序排序
-    transactions.sort_by_key(|tx| tx.index.unwrap_or(0));
-    
-    // 分批处理余额计算，避免单次处理交易过多
-    const BATCH_SIZE: usize = 5000;
-    let total_batches = (transactions.len() + BATCH_SIZE - 1) / BATCH_SIZE;
-    
-    println!("将分 {} 批次处理余额计算，每批 {} 笔交易", total_batches, BATCH_SIZE);
-    
-    let mut total_processed = 0;
-    
-    for (batch_idx, chunk) in transactions.chunks(BATCH_SIZE).enumerate() {
-        println!("处理余额计算批次 {}/{}，交易索引范围: {}-{}", 
-                batch_idx + 1, 
-                total_batches,
-                chunk.first().map_or(0, |tx| tx.index.unwrap_or(0)),
-                chunk.last().map_or(0, |tx| tx.index.unwrap_or(0)));
-        
-        match process_batch_balances(&db_conn.balances_col, chunk, token_decimals).await {
-            Ok((success, error)) => {
-                println!("批次余额更新完成: 成功处理 {} 笔交易, 失败 {} 笔", success, error);
-                total_processed += success;
-            },
-            Err(e) => {
-                println!("批次余额处理失败: {}", e);
-            }
-        }
-    }
-    
-    println!("所有交易的余额计算完成，共处理 {} 笔交易", total_processed);
+    println!("所有账户的余额计算已完成");
     Ok(())
 } 
