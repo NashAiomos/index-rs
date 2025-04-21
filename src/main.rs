@@ -1,6 +1,6 @@
 use ic_agent::{Agent};
 use ic_agent::export::Principal;
-use candid::{Encode, Decode, CandidType, IDLValue};
+use candid::{Encode, Decode, CandidType};
 use serde::{Deserialize, Serialize};
 use std::error::Error;
 use num_traits::ToPrimitive;
@@ -8,7 +8,6 @@ use std::fmt;
 use std::collections::HashMap;
 use tokio::time::{interval, Duration};
 use mongodb::{Client, options::ClientOptions, Collection, bson::{doc, to_bson}};
-use futures::stream::StreamExt;
 use mongodb::bson::Document;
 use config as config_rs;
 
@@ -290,7 +289,7 @@ async fn fetch_archive_transactions(
         // 将SimpleTransaction转换为Transaction
         let mut transactions = Vec::new();
         for (i, simple_tx) in simple_transactions.into_iter().enumerate() {
-            let mut tx = Transaction {
+            let tx = Transaction {
                 kind: simple_tx.kind,
                 timestamp: simple_tx.timestamp,
                 transfer: simple_tx.transfer,
@@ -310,6 +309,7 @@ async fn fetch_archive_transactions(
 }
 
 // 查询归档 canister 的交易
+#[allow(dead_code)]
 async fn fetch_archived_transaction_latest(
     agent: &Agent,
     archived: &ArchivedTransaction,
@@ -447,6 +447,7 @@ async fn fetch_ledger_transactions(
 }
 
 // 检查ledger当前状态
+#[allow(dead_code)]
 async fn get_ledger_status(
     agent: &Agent,
     canister_id: &Principal,
@@ -516,6 +517,7 @@ fn group_transactions_by_account(transactions: &[Transaction]) -> HashMap<String
 }
 
 /// 查询某账户下的所有交易
+#[allow(dead_code)]
 async fn get_account_transactions(
     accounts_col: &Collection<Document>,
     account: &str,
@@ -705,88 +707,134 @@ async fn main() -> Result<(), Box<dyn Error>> {
     
     println!("获取归档信息...");
     let archives = fetch_archives(&agent, &canister_id).await?;
-    
+
     if archives.is_empty() {
         println!("没有找到归档信息");
-        return Ok(());
-    }
-    
-    // 打印归档信息
-    for archive in &archives {
-        println!("找到归档信息: canister_id={}, 范围: {}-{}", 
-            archive.canister_id, 
-            archive.block_range_start.0, 
-            archive.block_range_end.0
-        );
-    }
-    
-    let archive_info = &archives[0]; // 使用第一个归档
-    let archive_canister_id = &archive_info.canister_id;
-    let block_range_start = archive_info.block_range_start.0.to_u64().unwrap_or(0);
-    let block_range_end = archive_info.block_range_end.0.to_u64().unwrap_or(0);
-    
-    // 先处理archive canister的历史交易
-    println!("开始同步历史交易从archive canister: {}", archive_canister_id);
-    
-    // 先尝试单个交易获取测试Candid解码功能
-    println!("测试获取单个交易...");
-    let test_transactions = fetch_archive_transactions(
-        &agent, 
-        archive_canister_id, 
-        block_range_start, 
-        1
-    ).await?;
-    
-    if test_transactions.is_empty() {
-        println!("无法从归档canister获取交易，可能是数据结构不匹配。");
-        println!("跳过归档canister，直接查询ledger canister。");
+        println!("交易都存在 ledger canister 里。跳过归档canister，直接查询ledger canister。");
     } else {
-        println!("测试成功，开始批量获取归档交易...");
-        
-        // 分批获取并处理归档交易
-        let mut current_start = block_range_start;
-        
-        while current_start <= block_range_end {
-            let current_length = std::cmp::min(BATCH_SIZE, block_range_end - current_start + 1);
-            println!("获取归档交易批次: {}-{}", current_start, current_start + current_length - 1);
-            
-            let transactions = fetch_archive_transactions(
-                &agent, 
-                archive_canister_id, 
-                current_start, 
-                current_length
-            ).await?;
-            
-            if transactions.is_empty() {
-                println!("批次内无交易，跳到下一批次");
-                current_start += current_length;
-                continue;
-            }
-            
-            println!("获取到 {} 笔交易，保存到数据库", transactions.len());
-            
-            // 保存交易到数据库
-            for tx in &transactions {
-                // 保存交易
-                save_transaction(&tx_col, tx).await?;
-                
-                // 更新账户-交易关系
-                let index = tx.index.unwrap_or(0);
-                let tx_clone = tx.clone();
-                let tx_array = vec![tx_clone];
-                let account_txs = group_transactions_by_account(&tx_array);
-                for (account, _) in &account_txs {
-                    save_account_transaction(&accounts_col, account, index).await?;
-                }
-            }
-            
-            current_start += current_length;
+        // 打印归档信息
+        println!("打印归档信息:"); // 添加日志以提高清晰度
+        for archive in &archives {
+            println!("找到归档信息: canister_id={}, 范围: {}-{}",
+                archive.canister_id,
+                archive.block_range_start.0,
+                archive.block_range_end.0
+            );
         }
-        
-        println!("历史交易同步完成");
-    }
-    
-    // 同步ledger的交易
+
+        // 保持原有逻辑，处理第一个找到的归档
+        let archive_info = &archives[0]; // 使用第一个归档
+        let archive_canister_id = &archive_info.canister_id;
+        let block_range_start = archive_info.block_range_start.0.to_u64().unwrap_or(0);
+        let block_range_end = archive_info.block_range_end.0.to_u64().unwrap_or(0);
+
+        // 先处理archive canister的历史交易
+        println!("开始同步历史交易从archive canister: {}", archive_canister_id);
+
+        // 先尝试单个交易获取测试Candid解码功能
+        println!("测试获取单个交易...");
+        // 使用 match 处理 fetch_archive_transactions 的结果
+        match fetch_archive_transactions(
+            &agent,
+            archive_canister_id,
+            block_range_start,
+            1
+        ).await {
+            Ok(test_transactions) => {
+                if test_transactions.is_empty() {
+                    println!("无法从归档canister获取交易（测试单条），可能是数据结构不匹配或归档为空。");
+                    println!("将跳过此归档canister处理。");
+                    // 跳过归档处理，后续将直接处理 ledger
+                } else {
+                    println!("测试成功，开始批量获取归档交易...");
+
+                    // 分批获取并处理归档交易
+                    let mut current_start = block_range_start;
+
+                    while current_start <= block_range_end {
+                        let current_length = std::cmp::min(BATCH_SIZE, block_range_end.saturating_sub(current_start) + 1);
+                        // 检查 current_length 是否为0，避免无效查询
+                        if current_length == 0 {
+                            println!("计算出的批次长度为0，停止此归档处理。");
+                            break;
+                        }
+
+                        println!("获取归档交易批次: {}-{}", current_start, current_start + current_length - 1);
+
+                        match fetch_archive_transactions(
+                            &agent,
+                            archive_canister_id,
+                            current_start,
+                            current_length
+                        ).await {
+                            Ok(transactions) => {
+                                let num_fetched = transactions.len();
+                                if num_fetched == 0 {
+                                     // 如果获取到0条交易，但未达到范围末尾，可能意味着此范围确实没有交易，或者有暂时性问题
+                                     println!("批次 {}-{} 内无交易。", current_start, current_start + current_length - 1);
+                                     // 推进 current_start 以继续下一个批次
+                                     current_start += current_length;
+                                     // 如果已经查询到了 block_range_end，则结束循环
+                                     if current_start > block_range_end {
+                                          println!("已达到归档范围末尾。");
+                                          break;
+                                     }
+                                     // 添加短暂延迟避免空轮询过快
+                                     tokio::time::sleep(Duration::from_millis(500)).await;
+                                     continue; // 继续下一个循环迭代
+                                }
+
+                                println!("获取到 {} 笔交易，保存到数据库", num_fetched);
+
+                                // 保存交易到数据库
+                                for tx in &transactions {
+                                    save_transaction(&tx_col, tx).await?;
+
+                                    let index = tx.index.unwrap_or(0); // 假设 index 总是存在
+                                    let tx_clone = tx.clone();
+                                    let tx_array = vec![tx_clone];
+                                    let account_txs = group_transactions_by_account(&tx_array);
+                                    for (account, _) in &account_txs {
+                                        save_account_transaction(&accounts_col, account, index).await?;
+                                    }
+                                }
+
+                                // 推进索引，确保即使获取数量少于请求数量也能正确前进
+                                current_start += num_fetched as u64;
+
+                                // 如果获取到的交易数量小于请求的数量，可能意味着到达了归档的末尾
+                                if (num_fetched as u64) < current_length {
+                                    println!("获取到的交易数量 ({}) 少于请求数量 ({})，可能已达归档末尾。", num_fetched, current_length);
+                                    break; // 结束此归档的处理
+                                }
+                            },
+                            Err(e) => {
+                                println!("获取归档交易批次 {}-{} 失败: {}", current_start, current_start + current_length - 1, e);
+                                // 实现简单的重试或跳过逻辑
+                                println!("短暂休眠后将尝试跳过此批次...");
+                                tokio::time::sleep(Duration::from_secs(5)).await;
+                                current_start += current_length; // 谨慎地跳过失败的批次
+                            }
+                        }
+                         // 在每个批次请求之间添加小的延迟，避免过于频繁地请求
+                         tokio::time::sleep(Duration::from_millis(200)).await;
+                    } // end while loop
+
+                    println!("归档 canister {} 的历史交易同步完成。", archive_canister_id);
+                } // end else (test transaction successful)
+            }, // end Ok case for test transaction fetch
+            Err(e) => {
+                 println!("测试获取单个归档交易失败: {}", e);
+                 println!("将跳过此归档canister处理。");
+                 // 不处理此归档，后续将直接处理 ledger
+            }
+        } // end match for test transaction fetch
+
+        // 如果需要处理所有 archives 而不是仅第一个，需要将上述逻辑放入循环中
+        println!("所有找到的归档处理完毕 (或跳过)。");
+    } // end else block (archives not empty)
+
+    // 不论是否有归档，都执行 ledger 同步
     println!("开始同步ledger交易...");
     sync_ledger_transactions(&agent, &canister_id, &tx_col, &accounts_col).await?;
     
