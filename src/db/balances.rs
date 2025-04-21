@@ -60,7 +60,10 @@ pub async fn calculate_all_balances(
     
     // 遍历所有账户
     while accounts_cursor.advance().await? {
-        let account_doc = accounts_cursor.current();
+        let raw_doc = accounts_cursor.current();
+        // 转换为Document类型
+        let account_doc = Document::try_from(raw_doc.to_owned())?;
+        
         let account = match account_doc.get_str("account") {
             Ok(acc) => acc.to_string(),
             Err(e) => {
@@ -71,8 +74,8 @@ pub async fn calculate_all_balances(
         };
         
         // 获取该账户的所有交易索引
-        let tx_indices: Vec<i64> = if let Ok(Some(value)) = account_doc.get("transaction_indices") {
-            if let Some(arr) = value.as_array() {
+        let tx_indices: Vec<i64> = if let Some(indices) = account_doc.get("transaction_indices") {
+            if let Bson::Array(arr) = indices {
                 arr.iter().filter_map(|b| match b {
                     Bson::Int64(i) => Some(*i),
                     Bson::Int32(i) => Some(i64::from(*i)),
@@ -187,8 +190,8 @@ pub async fn calculate_incremental_balances(
         };
         
         // 获取该账户的所有交易索引
-        let tx_indices: Vec<i64> = if let Ok(Some(value)) = account_doc.get("transaction_indices") {
-            if let Some(arr) = value.as_array() {
+        let tx_indices: Vec<i64> = if let Some(indices) = account_doc.get("transaction_indices") {
+            if let Bson::Array(arr) = indices {
                 arr.iter().filter_map(|b| match b {
                     Bson::Int64(i) => Some(*i),
                     Bson::Int32(i) => Some(i64::from(*i)),

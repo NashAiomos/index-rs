@@ -13,7 +13,6 @@ use crate::db::{init_db, create_indexes};
 use crate::sync::{sync_ledger_transactions, sync_archive_transactions};
 use crate::sync::admin::{reset_and_sync_all_transactions, calculate_all_balances};
 use crate::db::balances::calculate_incremental_balances;
-use crate::models::Transaction;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn Error>> {
@@ -85,7 +84,7 @@ async fn run_application() -> Result<(), Box<dyn Error>> {
     println!("阶段1：同步所有交易数据...");
     
     // 先同步归档数据
-    let archives_result = sync_archive_transactions(
+    let _archives_result = sync_archive_transactions(
         &agent,
         &canister_id, 
         &db_conn.tx_col, 
@@ -97,7 +96,7 @@ async fn run_application() -> Result<(), Box<dyn Error>> {
     
     // 同步主账本数据
     println!("开始同步ledger交易...");
-    let ledger_txs = if let Ok(txs) = sync_ledger_transactions(
+    let _ledger_txs = if let Ok(txs) = sync_ledger_transactions(
         &agent,
         &canister_id, 
         &db_conn.tx_col, 
