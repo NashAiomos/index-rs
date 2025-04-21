@@ -1,0 +1,81 @@
+use std::error::Error;
+use mongodb::{Collection, bson::doc};
+use mongodb::bson::Document;
+use tokio::time::Duration;
+use crate::models::Transaction;
+use crate::utils::create_error;
+
+/// 保存账户交易关系
+pub async fn save_account_transaction(
+    accounts_col: &Collection<Document>,
+    account: &str,
+    tx_index: u64,
+) -> Result<(), Box<dyn Error>> {
+    if account.trim().is_empty() {
+        println!("账户为空，跳过保存账户-交易关系");
+        return Ok(());
+    }
+    
+    // 设置重试逻辑
+    let max_retries = 3;
+    let mut retry_count = 0;
+    
+    while retry_count < max_retries {
+        // 增量追加交易索引到账户集合
+        match accounts_col.update_one(
+            doc! { "account": account },
+            doc! { 
+                "$set": { "account": account },
+                "$addToSet": { "transaction_indices": tx_index as i64 }
+            },
+            mongodb::options::UpdateOptions::builder().upsert(true).build()
+        ).await {
+            Ok(_) => return Ok(()),
+            Err(e) => {
+                retry_count += 1;
+                let wait_time = Duration::from_millis(500 * retry_count);
+                println!("保存账户-交易关系失败 (尝试 {}/{}): {}，等待 {:?} 后重试",
+                    retry_count, max_retries, e, wait_time);
+                tokio::time::sleep(wait_time).await;
+            }
+        }
+    }
+    
+    Err(create_error(&format!("保存账户-交易关系失败，已重试 {} 次", max_retries)))
+}
+
+/// 清空账户-交易关系集合
+pub async fn clear_accounts(accounts_col: &Collection<Document>) -> Result<u64, Box<dyn Error>> {
+    match accounts_col.delete_many(doc! {}, None).await {
+        Ok(result) => {
+            println!("已清除 {} 条账户-交易关系记录", result.deleted_count);
+            Ok(result.deleted_count)
+        },
+        Err(e) => {
+            println!("清除账户-交易关系集合失败: {}", e);
+            Err(create_error(&format!("清除账户-交易关系集合失败: {}", e)))
+        }
+    }
+}
+
+/// 查询某账户下的所有交易
+#[allow(dead_code)]
+pub async fn get_account_transactions(
+    accounts_col: &Collection<Document>,
+    account: &str,
+) -> Result<Vec<Transaction>, Box<dyn Error>> {
+    if let Some(doc) = accounts_col
+        .find_one(doc! { "account": account }, None)
+        .await?
+    {
+        if let Some(transactions_bson) = doc.get_array("transactions").ok() {
+            let mut txs = Vec::new();
+            for tx_bson in transactions_bson {
+                let tx: Transaction = mongodb::bson::from_bson(tx_bson.clone())?;
+                txs.push(tx);
+            }
+            return Ok(txs);
+        }
+    }
+    Ok(Vec::new())
+} 
