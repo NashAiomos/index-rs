@@ -1,0 +1,4 @@
+mongodb_url = "mongodb://localhost:27017"
+database = "ledger_sync"
+ic_url = "https://icp0.io"
+ledger_canister_id = "aiw2p-tyaaa-aaaam-aebyq-cai"

@@ -10,6 +10,7 @@ use tokio::time::{interval, Duration};
 use mongodb::{Client, options::ClientOptions, Collection, bson::{doc, to_bson}};
 use futures::stream::StreamExt;
 use mongodb::bson::Document;
+use config as config_rs;
 
 // 设置批量处理的大小
 const BATCH_SIZE: u64 = 1000;
@@ -656,13 +657,27 @@ async fn sync_ledger_transactions(
     Ok(())
 }
 
+#[derive(Debug, Deserialize)]
+struct Config {
+    mongodb_url: String,
+    database: String,
+    ledger_canister_id: String,
+    ic_url: String,
+}
+
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn Error>> {
+    // 读取配置文件
+    let settings = config_rs::Config::builder()
+        .add_source(config_rs::File::with_name("config"))
+        .build()?;
+    let cfg: Config = settings.try_deserialize()?;
+
     // 初始化 MongoDB
     let mongo_client = Client::with_options(
-        ClientOptions::parse("mongodb://localhost:27017").await?
+        ClientOptions::parse(&cfg.mongodb_url).await?
     )?;
-    let db = mongo_client.database("ledger_sync");
+    let db = mongo_client.database(&cfg.database);
     let accounts_col: Collection<mongodb::bson::Document> = db.collection("accounts");
     let tx_col: Collection<mongodb::bson::Document> = db.collection("transactions");
     
@@ -683,10 +698,10 @@ async fn main() -> Result<(), Box<dyn Error>> {
     ).await?;
 
     let agent = Agent::builder()
-        .with_url("https://icp0.io")
+        .with_url(&cfg.ic_url)
         .build()?;
 
-    let canister_id = Principal::from_text("aiw2p-tyaaa-aaaam-aebyq-cai")?;
+    let canister_id = Principal::from_text(&cfg.ledger_canister_id)?;
     
     println!("获取归档信息...");
     let archives = fetch_archives(&agent, &canister_id).await?;
