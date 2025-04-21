@@ -16,7 +16,7 @@ pub struct GetTransactionsArg {
 }
 
 // Archives 查询的返回类型
-#[derive(CandidType, Deserialize, Debug)]
+#[derive(CandidType, Deserialize, Debug, Clone)]
 pub struct ArchiveInfo {
     pub block_range_end: candid::Nat,
     pub canister_id: Principal,

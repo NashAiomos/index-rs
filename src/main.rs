@@ -11,7 +11,7 @@ use tokio::time::Duration;
 use crate::config::{load_config, parse_args, parse_canister_id, create_agent, get_token_decimals};
 use crate::db::{init_db, create_indexes};
 use crate::sync::{sync_ledger_transactions, sync_archive_transactions};
-use crate::sync::admin::reset_and_sync_all_transactions;
+use crate::sync::admin::{reset_and_sync_all_transactions, calculate_all_balances};
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn Error>> {
@@ -79,16 +79,19 @@ async fn run_application() -> Result<(), Box<dyn Error>> {
         return Ok(());
     }
     
-    // 正常模式：先同步归档，再同步主账本
+    // 正常模式：采用两阶段同步方式
+    // 阶段1：只同步交易数据，不计算余额
+    println!("阶段1：同步所有交易数据...");
     
-    // 同步归档数据
+    // 先同步归档数据
     sync_archive_transactions(
             &agent,
         &canister_id, 
         &db_conn.tx_col, 
         &db_conn.accounts_col, 
         &db_conn.balances_col, 
-        token_decimals
+        token_decimals,
+        false // 不计算余额
     ).await?;
     
     // 同步主账本数据
@@ -99,15 +102,18 @@ async fn run_application() -> Result<(), Box<dyn Error>> {
         &db_conn.tx_col, 
         &db_conn.accounts_col, 
         &db_conn.balances_col, 
-        token_decimals
+        token_decimals,
+        false // 不计算余额
                         ).await {
         eprintln!("同步ledger交易时发生错误: {}", e);
-        // 不返回错误，继续执行定时同步逻辑
-    } else {
-        println!("初始同步完成");
+        // 不返回错误，继续执行后续逻辑
     }
     
-    println!("开始实时监控新交易");
+    // 阶段2：从数据库读取所有交易并按索引顺序计算余额
+    println!("阶段2：按交易索引顺序计算余额...");
+    calculate_all_balances(&db_conn, token_decimals).await?;
+    
+    println!("初始同步和余额计算完成，开始实时监控新交易");
     
     // 定时增量同步
     let mut interval = interval(Duration::from_secs(5));
@@ -118,13 +124,16 @@ async fn run_application() -> Result<(), Box<dyn Error>> {
         interval.tick().await;
         
         println!("\n执行定时增量同步...");
+        
+        // 增量同步时直接计算余额
         match sync_ledger_transactions(
             &agent, 
             &canister_id, 
             &db_conn.tx_col, 
             &db_conn.accounts_col, 
             &db_conn.balances_col, 
-            token_decimals
+            token_decimals,
+            true // 增量同步时计算余额
         ).await {
             Ok(_) => {
                 println!("定时增量同步完成");

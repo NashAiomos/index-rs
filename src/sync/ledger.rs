@@ -19,6 +19,7 @@ pub async fn sync_ledger_transactions(
     accounts_col: &Collection<Document>,
     balances_col: &Collection<Document>,
     token_decimals: u8,
+    calculate_balance: bool, // 是否计算余额
 ) -> Result<(), Box<dyn Error>> {
     // 获取数据库里面最新的交易索引
     let latest_index = match get_latest_transaction_index(tx_col).await {
@@ -101,10 +102,14 @@ pub async fn sync_ledger_transactions(
                 consecutive_empty = 0;
                 println!("获取到 {} 笔交易", transactions.len());
                 
+                // 确保交易按索引排序
+                let mut sorted_transactions = transactions.clone();
+                sorted_transactions.sort_by_key(|tx| tx.index.unwrap_or(0));
+                
                 // 保存交易到数据库
                 let mut success_count = 0;
                 let mut error_count = 0;
-                for tx in &transactions {
+                for tx in &sorted_transactions {
                     // 保存交易
                     match save_transaction(tx_col, tx).await {
                         Ok(_) => {
@@ -131,14 +136,20 @@ pub async fn sync_ledger_transactions(
                 
                 println!("成功保存 {} 笔交易，失败 {} 笔", success_count, error_count);
                 
-                // 处理这批交易的余额更新
-                match process_batch_balances(balances_col, &transactions, token_decimals).await {
-                    Ok((success, error)) => {
-                        println!("余额更新: 成功处理 {} 笔交易, 失败 {} 笔", success, error);
-                    },
-                    Err(e) => {
-                        println!("批量处理余额更新失败: {}", e);
+                // 根据参数决定是否处理余额
+                if calculate_balance {
+                    println!("处理余额更新...");
+                    // 处理这批交易的余额更新
+                    match process_batch_balances(balances_col, &sorted_transactions, token_decimals).await {
+                        Ok((success, error)) => {
+                            println!("余额更新: 成功处理 {} 笔交易, 失败 {} 笔", success, error);
+                        },
+                        Err(e) => {
+                            println!("批量处理余额更新失败: {}", e);
+                        }
                     }
+                } else {
+                    println!("跳过余额计算");
                 }
                 
                 // 更新当前索引并重置重试计数

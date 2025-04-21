@@ -19,6 +19,7 @@ pub async fn sync_archive_transactions(
     accounts_col: &Collection<Document>,
     balances_col: &Collection<Document>,
     token_decimals: u8,
+    calculate_balance: bool, // 是否计算余额
 ) -> Result<(), Box<dyn Error>> {
     println!("获取归档信息...");
     let archives = match fetch_archives(&agent, &canister_id).await {
@@ -45,17 +46,24 @@ pub async fn sync_archive_transactions(
         );
     }
     
+    // 按区块范围起始位置对归档进行排序，确保按时间顺序处理
+    let mut sorted_archives = archives.clone();
+    sorted_archives.sort_by(|a, b| {
+        a.block_range_start.0.cmp(&b.block_range_start.0)
+    });
+    
     // 处理所有找到的归档
-    for (idx, archive_info) in archives.iter().enumerate() {
+    for (idx, archive_info) in sorted_archives.iter().enumerate() {
         process_single_archive(
             agent,
             archive_info,
             idx + 1,
-            archives.len(),
+            sorted_archives.len(),
             tx_col,
             accounts_col,
             balances_col,
-            token_decimals
+            token_decimals,
+            calculate_balance
         ).await?;
     }
     
@@ -73,6 +81,7 @@ async fn process_single_archive(
     accounts_col: &Collection<Document>,
     balances_col: &Collection<Document>,
     token_decimals: u8,
+    calculate_balance: bool, // 是否计算余额
 ) -> Result<(), Box<dyn Error>> {
     println!("\n处理归档 {}/{}: canister_id={}", index, total, archive_info.canister_id);
     let archive_canister_id = &archive_info.canister_id;
@@ -137,11 +146,15 @@ async fn process_single_archive(
                         
                         println!("获取到 {} 笔交易，保存到数据库", num_fetched);
                         
+                        // 按交易索引对交易进行排序，确保按时间顺序处理
+                        let mut sorted_transactions = transactions.clone();
+                        sorted_transactions.sort_by_key(|tx| tx.index.unwrap_or(0));
+                        
                         // 保存交易到数据库
                         let mut success_count = 0;
                         let mut error_count = 0;
                         
-                        for tx in &transactions {
+                        for tx in &sorted_transactions {
                             match save_transaction(tx_col, tx).await {
                                 Ok(_) => {
                                     success_count += 1;
@@ -167,14 +180,20 @@ async fn process_single_archive(
                         
                         println!("保存结果: 成功={}, 失败={}", success_count, error_count);
                         
-                        // 处理这批交易的余额更新
-                        match process_batch_balances(&balances_col, &transactions, token_decimals).await {
-                            Ok((success, error)) => {
-                                println!("余额更新: 成功处理 {} 笔交易, 失败 {} 笔", success, error);
-                            },
-                            Err(e) => {
-                                println!("批量处理余额更新失败: {}", e);
+                        // 根据参数决定是否处理余额
+                        if calculate_balance {
+                            println!("处理余额更新...");
+                            // 处理这批交易的余额更新
+                            match process_batch_balances(&balances_col, &sorted_transactions, token_decimals).await {
+                                Ok((success, error)) => {
+                                    println!("余额更新: 成功处理 {} 笔交易, 失败 {} 笔", success, error);
+                                },
+                                Err(e) => {
+                                    println!("批量处理余额更新失败: {}", e);
+                                }
                             }
+                        } else {
+                            println!("跳过余额计算");
                         }
                         
                         // 推进索引，确保即使获取数量少于请求数量也能正确前进

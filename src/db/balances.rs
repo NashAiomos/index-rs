@@ -104,7 +104,7 @@ pub async fn process_transaction_balance(
     match tx.kind.as_str() {
         "transfer" => {
             if let Some(ref transfer) = tx.transfer {
-                // 从发送方减少余额
+                // 从发送方减少余额（包括转账金额）
                 let from_account = transfer.from.to_string();
                 update_account_balance(
                     balances_col,
@@ -128,7 +128,7 @@ pub async fn process_transaction_balance(
                     token_decimals,
                 ).await?;
                 
-                // 如果有手续费，从发送方扣除
+                // 如果有手续费，从发送方额外扣除
                 if let Some(ref fee) = transfer.fee {
                     if !fee.0.is_zero() {
                         update_account_balance(
@@ -176,8 +176,6 @@ pub async fn process_transaction_balance(
         },
         "approve" => {
             // approve操作不影响余额，只是授权其他账户可以代表发送方转账
-            // 这里不需要做余额更新
-            
             // 但如果有手续费，需要扣除
             if let Some(ref approve) = tx.approve {
                 if let Some(ref fee) = approve.fee {
@@ -213,7 +211,11 @@ pub async fn process_batch_balances(
     let mut success_count = 0;
     let mut error_count = 0;
     
-    for tx in transactions {
+    // 按交易索引排序，确保按照时间顺序处理
+    let mut ordered_transactions = transactions.to_vec();
+    ordered_transactions.sort_by_key(|tx| tx.index.unwrap_or(0));
+    
+    for tx in &ordered_transactions {
         match process_transaction_balance(balances_col, tx, token_decimals).await {
             Ok(_) => {
                 success_count += 1;
@@ -229,7 +231,6 @@ pub async fn process_batch_balances(
 }
 
 /// 查询账户余额
-#[allow(dead_code)]
 pub async fn get_account_balance(
     balances_col: &Collection<Document>,
     account: &str,

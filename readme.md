@@ -1,8 +1,67 @@
-# index-rs
+# 区块链交易索引服务
 
-`index-rs` 是一个用于同步和索引 Internet Computer (IC) 账本 Canister 交易的 Rust 工具。
+这是一个用于同步和索引区块链交易的Rust应用程序，专门设计用于与Internet Computer (IC) Ledger Canister进行交互。
 
-它会每秒拉取主账本及归档 Canister 的所有交易，然后按账户分组存储到 MongoDB 数据库中，便于后续查询和分析。同时，还会自动计算和更新每个账户的实时余额。
+## 核心功能
+
+- 从区块链同步所有交易数据到MongoDB数据库
+- 根据交易计算每个账户的余额
+- 提供账户余额查询API
+- 支持重置和完全重新同步模式
+- 实时监控新交易
+
+## 余额计算逻辑
+
+余额计算采用了两阶段处理方式，确保了计算的准确性：
+
+1. **第一阶段：仅同步交易数据到数据库**
+   - 先同步所有归档交易
+   - 再同步主账本交易
+   - 这一阶段不做余额计算，只保存交易数据
+
+2. **第二阶段：按索引顺序计算余额**
+   - 从数据库读取所有交易
+   - 按交易索引进行全局排序
+   - 按顺序处理每笔交易并更新账户余额
+
+余额计算规则：
+- `transfer`: 从发送方减少余额，接收方增加余额，发送方扣除手续费
+- `mint`: 接收方余额增加
+- `burn`: 发送方余额减少
+- `approve`: 不影响余额，但如果有手续费，从发送方扣除
+
+## 运行方式
+
+### 常规运行
+```
+cargo run
+```
+
+### 重置模式
+```
+cargo run -- --reset
+```
+重置模式会清空现有数据库，重新从区块链拉取所有交易，并重新计算余额。
+
+## 配置
+
+配置文件 `config.toml` 支持以下参数：
+```toml
+mongodb_url = "mongodb://localhost:27017"
+database = "ledger"
+ic_url = "https://icp0.io"
+ledger_canister_id = "your-canister-id"
+token_decimals = 8  # 可选，如果不设置会自动从canister查询
+```
+
+## 交易同步流程
+
+1. 查找所有归档交易
+2. 按区块范围排序处理归档
+3. 每个归档按批次获取交易
+4. 同步主账本最新交易
+5. 完成所有交易获取后，进行余额计算
+6. 进入定时监控模式，持续获取新交易
 
 ## 项目结构
 
@@ -32,18 +91,6 @@ src/
 1. **transactions**: 存储所有交易记录
 2. **accounts**: 记录账户与交易的关系
 3. **balances**: 存储每个账户的最新余额信息
-
-## 配置文件
-
-配置文件 `config.toml` 包含以下配置项：
-
-```toml
-mongodb_url = "mongodb://localhost:27017"  # MongoDB连接地址
-database = "ledger"                       # 数据库名称
-ic_url = "https://icp0.io"                # IC网络地址
-ledger_canister_id = "ryjl3-tyaaa-..."    # 账本Canister ID
-token_decimals = 8                        # 可选：代币小数位，如不指定会自动查询
-```
 
 ## 构建与运行
 
