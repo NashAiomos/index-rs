@@ -13,6 +13,7 @@ use crate::db::{init_db, create_indexes};
 use crate::sync::{sync_ledger_transactions, sync_archive_transactions};
 use crate::sync::admin::{reset_and_sync_all_transactions, calculate_all_balances};
 use crate::db::balances::calculate_incremental_balances;
+use crate::db::sync_status::{get_sync_status, set_incremental_mode};
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn Error>> {
@@ -80,44 +81,81 @@ async fn run_application() -> Result<(), Box<dyn Error>> {
         return Ok(());
     }
     
-    // 正常模式：先同步所有交易，再统一计算余额
-    println!("阶段1：同步所有交易数据...");
-    
-    // 先同步归档数据
-    let _archives_result = sync_archive_transactions(
-        &agent,
-        &canister_id, 
-        &db_conn.tx_col, 
-        &db_conn.accounts_col, 
-        &db_conn.balances_col, 
-        token_decimals,
-        false // 不计算余额
-    ).await?;
-    
-    // 同步主账本数据
-    println!("开始同步ledger交易...");
-    let _ledger_txs = if let Ok(txs) = sync_ledger_transactions(
-        &agent,
-        &canister_id, 
-        &db_conn.tx_col, 
-        &db_conn.accounts_col, 
-        &db_conn.balances_col, 
-        token_decimals,
-        false // 不计算余额
-    ).await {
-        txs
-    } else {
-        eprintln!("同步ledger交易时发生错误，继续执行后续逻辑");
-        Vec::new()
+    // 检查同步状态，确定是否需要初始同步
+    let needs_initial_sync = match get_sync_status(&db_conn.sync_status_col).await {
+        Ok(Some(status)) => {
+            if status.sync_mode == "incremental" && status.last_synced_index > 0 {
+                println!("检测到有效的同步状态，上次同步索引：{}，将继续增量同步", status.last_synced_index);
+                false
+            } else {
+                println!("同步状态无效或为全量模式，需要进行初始同步");
+                true
+            }
+        },
+        _ => {
+            println!("未找到同步状态记录，将进行初始同步");
+            true
+        }
     };
     
-    // 阶段2：使用新算法根据账户交易记录计算余额
-    println!("阶段2：根据账户交易记录统一计算余额...");
-    calculate_all_balances(&db_conn, token_decimals).await?;
-    
-    println!("初始同步和余额计算完成，开始实时监控新交易");
+    // 如果需要初始同步，执行全量同步流程
+    if needs_initial_sync {
+        // 正常模式：先同步所有交易，再统一计算余额
+        println!("阶段1：同步所有交易数据...");
+        
+        // 先同步归档数据
+        let _archives_result = sync_archive_transactions(
+            &agent,
+            &canister_id, 
+            &db_conn.tx_col, 
+            &db_conn.accounts_col, 
+            &db_conn.balances_col, 
+            token_decimals,
+            false // 不计算余额
+        ).await?;
+        
+        // 同步主账本数据
+        println!("开始同步ledger交易...");
+        let ledger_txs = if let Ok(txs) = sync_ledger_transactions(
+            &agent,
+            &canister_id, 
+            &db_conn.tx_col, 
+            &db_conn.accounts_col, 
+            &db_conn.balances_col, 
+            token_decimals,
+            false // 不计算余额
+        ).await {
+            txs
+        } else {
+            eprintln!("同步ledger交易时发生错误，继续执行后续逻辑");
+            Vec::new()
+        };
+        
+        // 阶段2：使用新算法根据账户交易记录计算余额
+        println!("阶段2：根据账户交易记录统一计算余额...");
+        calculate_all_balances(&db_conn, token_decimals).await?;
+        
+        // 设置增量同步模式
+        if !ledger_txs.is_empty() {
+            if let Some(last_tx) = ledger_txs.last() {
+                if let Some(index) = last_tx.index {
+                    println!("设置增量同步起点为最后一笔交易索引: {}", index);
+                    set_incremental_mode(
+                        &db_conn.sync_status_col, 
+                        index, 
+                        last_tx.timestamp
+                    ).await?;
+                }
+            }
+        }
+        
+        println!("初始同步和余额计算完成，将开始实时监控新交易");
+    } else {
+        println!("跳过初始同步，直接进入增量同步模式");
+    }
     
     // 定时增量同步
+    println!("开始实时监控新交易");
     let mut interval = interval(Duration::from_secs(5));
     let mut consecutive_errors = 0;
     let max_consecutive_errors = 5;

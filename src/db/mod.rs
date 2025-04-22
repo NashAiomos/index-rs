@@ -1,10 +1,11 @@
 use std::error::Error;
 use mongodb::{Client, options::ClientOptions, Collection, Database};
-use mongodb::bson::Document;
+use mongodb::bson::{Document, doc};
 
 pub mod transactions;
 pub mod accounts;
 pub mod balances;
+pub mod sync_status;
 
 /// 数据库连接信息
 pub struct DbConnection {
@@ -13,6 +14,7 @@ pub struct DbConnection {
     pub tx_col: Collection<Document>,
     pub accounts_col: Collection<Document>,
     pub balances_col: Collection<Document>,
+    pub sync_status_col: Collection<Document>,
 }
 
 /// 初始化MongoDB连接
@@ -39,12 +41,14 @@ pub async fn init_db(mongodb_url: &str, database_name: &str) -> Result<DbConnect
     let accounts_col: Collection<Document> = db.collection("accounts");
     let tx_col: Collection<Document> = db.collection("transactions");
     let balances_col: Collection<Document> = db.collection("balances");
+    let sync_status_col: Collection<Document> = db.collection("sync_status");
     
     Ok(DbConnection {
         db,
         tx_col,
         accounts_col,
         balances_col,
+        sync_status_col,
     })
 }
 
@@ -85,6 +89,18 @@ pub async fn create_indexes(conn: &DbConnection) -> Result<(), Box<dyn Error>> {
     ).await {
         Ok(_) => println!("余额索引创建成功"),
         Err(e) => eprintln!("余额索引创建失败: {}", e)
+    }
+    
+    // 同步状态索引
+    match conn.sync_status_col.create_index(
+        mongodb::IndexModel::builder()
+            .keys(mongodb::bson::doc! { "status_type": 1 })
+            .options(mongodb::options::IndexOptions::builder().unique(true).build())
+            .build(),
+        None
+    ).await {
+        Ok(_) => println!("同步状态索引创建成功"),
+        Err(e) => eprintln!("同步状态索引创建失败: {}", e)
     }
     
     Ok(())

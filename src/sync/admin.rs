@@ -4,6 +4,7 @@ use ic_agent::export::Principal;
 use crate::db::transactions::clear_transactions;
 use crate::db::accounts::clear_accounts;
 use crate::db::balances::{clear_balances, calculate_all_balances as calc_balances};
+use crate::db::sync_status::{clear_sync_status, set_full_sync_mode, set_incremental_mode};
 use crate::db::create_indexes;
 use crate::db::DbConnection;
 use crate::sync::archive::sync_archive_transactions;
@@ -33,6 +34,13 @@ pub async fn reset_and_sync_all_transactions(
     println!("清空余额集合...");
     clear_balances(&db_conn.balances_col).await?;
     
+    // 清空同步状态集合
+    println!("清空同步状态集合...");
+    clear_sync_status(&db_conn.sync_status_col).await?;
+    
+    // 设置为全量同步模式
+    set_full_sync_mode(&db_conn.sync_status_col).await?;
+    
     // 重新创建索引
     println!("重新创建索引...");
     create_indexes(db_conn).await?;
@@ -42,7 +50,7 @@ pub async fn reset_and_sync_all_transactions(
     
     // 先同步归档数据
     println!("\n同步归档交易...");
-    sync_archive_transactions(
+    let archive_result = sync_archive_transactions(
         agent,
         canister_id,
         &db_conn.tx_col,
@@ -66,7 +74,7 @@ pub async fn reset_and_sync_all_transactions(
     }
     
     // 从当前索引开始同步ledger数据
-    sync_ledger_transactions(
+    let ledger_transactions = sync_ledger_transactions(
         agent,
         canister_id,
         &db_conn.tx_col,
@@ -80,7 +88,25 @@ pub async fn reset_and_sync_all_transactions(
     println!("\n第二阶段：根据账户信息计算余额...");
     calculate_all_balances(db_conn, token_decimals).await?;
     
+    // 获取最新交易索引和时间戳，用于设置增量同步起点
+    let mut latest_index = 0;
+    let mut latest_timestamp = 0;
+    
+    if !ledger_transactions.is_empty() {
+        if let Some(last_tx) = ledger_transactions.last() {
+            if let Some(index) = last_tx.index {
+                latest_index = index;
+            }
+            latest_timestamp = last_tx.timestamp;
+        }
+    }
+    
+    // 设置为增量同步模式，并保存最新同步状态
+    set_incremental_mode(&db_conn.sync_status_col, latest_index, latest_timestamp).await?;
+    
     println!("数据库重置和交易同步完成，所有账户余额已根据交易记录重新计算！");
+    println!("下次运行将从索引 {} 开始增量同步", latest_index + 1);
+    
     Ok(())
 }
 

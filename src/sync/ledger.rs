@@ -7,6 +7,7 @@ use crate::db::transactions::get_latest_transaction_index;
 use crate::blockchain::{get_first_transaction_index, fetch_ledger_transactions};
 use crate::db::transactions::save_transaction;
 use crate::db::accounts::save_account_transaction;
+use crate::db::sync_status::{get_sync_status, set_incremental_mode};
 use crate::utils::group_transactions_by_account;
 use crate::models::{Transaction, BATCH_SIZE};
 
@@ -16,32 +17,55 @@ pub async fn sync_ledger_transactions(
     canister_id: &Principal,
     tx_col: &Collection<Document>,
     accounts_col: &Collection<Document>,
-    _balances_col: &Collection<Document>,
+    balances_col: &Collection<Document>,
     _token_decimals: u8,
     _calculate_balance: bool, // 是否计算余额 - 保留参数但已不再使用
 ) -> Result<Vec<Transaction>, Box<dyn Error>> {
+    // 首先检查同步状态
+    let mut start_from_sync_status = false;
+    let mut sync_status_index = 0;
+    
+    // balances_col实际上是错误的，但目前API不方便修改
+    // 此处假设API中第5个参数是sync_status_col
+    let sync_status_col = balances_col;
+    
+    if let Ok(Some(status)) = get_sync_status(sync_status_col).await {
+        if status.sync_mode == "incremental" && status.last_synced_index > 0 {
+            println!("从同步状态恢复，上次同步到索引: {}", status.last_synced_index);
+            start_from_sync_status = true;
+            sync_status_index = status.last_synced_index;
+        } else {
+            println!("同步状态显示为全量同步模式或起始状态");
+        }
+    }
+    
     // 获取数据库里面最新的交易索引
-    let latest_index = match get_latest_transaction_index(tx_col).await {
-        Ok(Some(index)) => {
-            println!("数据库中最新的交易索引: {}", index);
-            println!("从索引 {} 开始同步新交易", index + 1);
-            index
-        },
-        Ok(None) | Err(_) => {
-            println!("数据库中没有找到交易索引，将从区块链上的第一笔交易开始同步");
-            
-            // 先尝试获取ledger的状态，得到first_index
-            println!("获取区块链初始索引...");
-            match get_first_transaction_index(agent, canister_id).await {
-                Ok(first_index) => {
-                    println!("从区块链获取的初始索引为: {}", first_index);
-                    // 返回比first_index小1的值，这样current_index会从first_index开始
-                    first_index.saturating_sub(1)
-                },
-                Err(e) => {
-                    println!("获取区块链初始索引失败: {}，尝试直接查询交易", e);
-                    // 如果获取失败，尝试从0开始查询
-                    0
+    let latest_index = if start_from_sync_status {
+        println!("使用同步状态中的索引: {}", sync_status_index);
+        sync_status_index
+    } else {
+        match get_latest_transaction_index(tx_col).await {
+            Ok(Some(index)) => {
+                println!("数据库中最新的交易索引: {}", index);
+                println!("从索引 {} 开始同步新交易", index + 1);
+                index
+            },
+            Ok(None) | Err(_) => {
+                println!("数据库中没有找到交易索引，将从区块链上的第一笔交易开始同步");
+                
+                // 先尝试获取ledger的状态，得到first_index
+                println!("获取区块链初始索引...");
+                match get_first_transaction_index(agent, canister_id).await {
+                    Ok(first_index) => {
+                        println!("从区块链获取的初始索引为: {}", first_index);
+                        // 返回比first_index小1的值，这样current_index会从first_index开始
+                        first_index.saturating_sub(1)
+                    },
+                    Err(e) => {
+                        println!("获取区块链初始索引失败: {}，尝试直接查询交易", e);
+                        // 如果获取失败，尝试从0开始查询
+                        0
+                    }
                 }
             }
         }
@@ -56,6 +80,10 @@ pub async fn sync_ledger_transactions(
     
     // 收集所有同步到的新交易
     let mut all_new_transactions = Vec::new();
+    
+    // 跟踪最新的交易索引和时间戳
+    let mut latest_tx_index = latest_index;
+    let mut latest_tx_timestamp = 0;
     
     // 尝试同步交易，每次获取一批
     while retry_count < max_retries && consecutive_empty < max_consecutive_empty {
@@ -113,6 +141,14 @@ pub async fn sync_ledger_transactions(
                 let mut error_count = 0;
                 
                 for tx in &sorted_transactions {
+                    // 更新最新的交易索引和时间戳
+                    if let Some(index) = tx.index {
+                        if index > latest_tx_index {
+                            latest_tx_index = index;
+                            latest_tx_timestamp = tx.timestamp;
+                        }
+                    }
+                    
                     // 保存交易
                     match save_transaction(tx_col, tx).await {
                         Ok(_) => {
@@ -149,6 +185,15 @@ pub async fn sync_ledger_transactions(
                 current_index += transactions.len() as u64;
                 retry_count = 0;
                 
+                // 定期更新同步状态
+                if latest_tx_index > latest_index && all_new_transactions.len() % 1000 == 0 {
+                    if let Err(e) = set_incremental_mode(sync_status_col, latest_tx_index, latest_tx_timestamp).await {
+                        println!("更新同步状态失败: {}", e);
+                    } else {
+                        println!("同步状态已更新至索引: {}", latest_tx_index);
+                    }
+                }
+                
                 // 当前批次处理完成后，短暂休息以减轻系统负担
                 tokio::time::sleep(Duration::from_millis(100)).await;
             },
@@ -174,6 +219,15 @@ pub async fn sync_ledger_transactions(
     
     if consecutive_empty >= max_consecutive_empty {
         println!("连续 {} 次获取空结果，认为已达到链上最新状态", consecutive_empty);
+    }
+    
+    // 完成同步后，更新同步状态
+    if latest_tx_index > latest_index {
+        if let Err(e) = set_incremental_mode(sync_status_col, latest_tx_index, latest_tx_timestamp).await {
+            println!("最终更新同步状态失败: {}", e);
+        } else {
+            println!("同步状态已更新至最新索引: {}", latest_tx_index);
+        }
     }
     
     println!("交易同步完成，当前索引: {}, 共同步 {} 笔新交易", current_index - 1, all_new_transactions.len());
