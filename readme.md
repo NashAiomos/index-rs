@@ -1,12 +1,12 @@
 # 区块链交易索引服务
 
-这是一个用于同步和索引区块链交易的Rust应用程序，专门设计用于与Internet Computer (IC) Ledger Canister进行交互。
+这是一个用于同步和索引区块链交易的Rust应用程序，专门设计用于与 Internet Computer (IC) Ledger Canister 进行交互。
 
 ## 核心功能
 
-- 从区块链同步所有交易数据到MongoDB数据库
+- 从区块链同步所有交易数据到 MongoDB 数据库
 - 根据交易计算每个账户的余额
-- 提供账户余额查询API
+- 提供账户余额查询 API
 - 支持重置和完全重新同步模式
 - 实时监控新交易
 
