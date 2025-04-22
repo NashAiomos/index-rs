@@ -26,8 +26,7 @@ pub async fn sync_ledger_transactions(
     let mut start_from_sync_status = false;
     let mut sync_status_index = 0;
     
-    // balances_col实际上是错误的，但目前API不方便修改
-    // 此处假设API中第5个参数是sync_status_col
+    // 兼容现有API，第5个参数是sync_status_col
     let sync_status_col = balances_col;
     
     if let Ok(Some(status)) = get_sync_status(sync_status_col).await {

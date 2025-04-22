@@ -23,19 +23,16 @@ pub async fn reset_and_sync_all_transactions(
 ) -> Result<(), Box<dyn Error>> {
     info!("开始重置数据库并重新同步所有交易数据...");
     
-    // 清空交易集合
+    // 清空集合
     info!("清空交易集合...");
     clear_transactions(&db_conn.tx_col).await?;
     
-    // 清空账户-交易关系集合
     info!("清空账户-交易关系集合...");
     clear_accounts(&db_conn.accounts_col).await?;
     
-    // 清空余额集合
     info!("清空余额集合...");
     clear_balances(&db_conn.balances_col).await?;
     
-    // 清空同步状态集合
     info!("清空同步状态集合...");
     clear_sync_status(&db_conn.sync_status_col).await?;
     
@@ -46,7 +43,7 @@ pub async fn reset_and_sync_all_transactions(
     info!("重新创建索引...");
     create_indexes(db_conn).await?;
     
-    // 第一阶段：先同步所有交易数据，不计算余额
+    // 第一阶段：同步交易数据
     info!("\n第一阶段：同步所有交易数据到数据库...");
     
     // 先同步归档数据
@@ -85,7 +82,7 @@ pub async fn reset_and_sync_all_transactions(
         false // 不计算余额，只保存交易
     ).await?;
     
-    // 第二阶段：从数据库读取所有交易，按索引排序后进行余额计算
+    // 第二阶段：计算余额
     info!("\n第二阶段：根据账户信息计算余额...");
     calculate_all_balances(db_conn, token_decimals).await?;
     

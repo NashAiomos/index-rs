@@ -5,6 +5,7 @@ use mongodb::options::FindOptions;
 use tokio::time::Duration;
 use candid::Nat;
 use num_traits::Zero;
+use log::{info, error, warn, debug};
 use crate::models::Transaction;
 use crate::utils::{create_error, format_token_amount};
 
@@ -33,11 +34,11 @@ pub async fn get_account_balance(
 pub async fn clear_balances(balances_col: &Collection<Document>) -> Result<u64, Box<dyn Error>> {
     match balances_col.delete_many(doc! {}, None).await {
         Ok(result) => {
-            println!("已清除 {} 条余额记录", result.deleted_count);
+            info!("已清除 {} 条余额记录", result.deleted_count);
             Ok(result.deleted_count)
         },
         Err(e) => {
-            println!("清除余额集合失败: {}", e);
+            error!("清除余额集合失败: {}", e);
             Err(create_error(&format!("清除余额集合失败: {}", e)))
         }
     }
@@ -51,7 +52,7 @@ pub async fn calculate_all_balances(
     balances_col: &Collection<Document>,
     token_decimals: u8,
 ) -> Result<(u64, u64), Box<dyn Error>> {
-    println!("开始计算所有账户余额...");
+    info!("开始计算所有账户余额...");
     
     // 首先清空余额集合
     clear_balances(balances_col).await?;
@@ -71,7 +72,7 @@ pub async fn calculate_all_balances(
         let account = match account_doc.get_str("account") {
             Ok(acc) => acc.to_string(),
             Err(e) => {
-                println!("无法获取账户信息: {}", e);
+                error!("无法获取账户信息: {}", e);
                 error_count += 1;
                 continue;
             }
@@ -86,22 +87,22 @@ pub async fn calculate_all_balances(
                     _ => None,
                 }).collect()
             } else {
-                println!("账户 {} 的交易索引不是数组格式", account);
+                error!("账户 {} 的交易索引不是数组格式", account);
                 error_count += 1;
                 continue;
             }
         } else {
-            println!("无法获取账户 {} 的交易索引", account);
+            error!("无法获取账户 {} 的交易索引", account);
             error_count += 1;
             continue;
         };
         
         if tx_indices.is_empty() {
-            println!("账户 {} 没有交易记录", account);
+            debug!("账户 {} 没有交易记录", account);
             continue;
         }
         
-        println!("正在计算账户 {} 的余额，共有 {} 笔交易", account, tx_indices.len());
+        info!("正在计算账户 {} 的余额，共有 {} 笔交易", account, tx_indices.len());
         
         // 计算该账户的余额
         match calculate_account_balance(&account, &tx_indices, tx_col, token_decimals).await {
@@ -109,24 +110,24 @@ pub async fn calculate_all_balances(
                 // 更新余额记录
                 match save_account_balance(balances_col, &account, &balance).await {
                     Ok(_) => {
-                        println!("账户 {} 余额计算完成: {} ({} 代币)", 
+                        info!("账户 {} 余额计算完成: {} ({} 代币)", 
                                 account, balance.0, format_token_amount(&balance, token_decimals));
                         success_count += 1;
                     },
                     Err(e) => {
-                        println!("保存账户 {} 余额失败: {}", account, e);
+                        error!("保存账户 {} 余额失败: {}", account, e);
                         error_count += 1;
                     }
                 }
             },
             Err(e) => {
-                println!("计算账户 {} 余额失败: {}", account, e);
+                error!("计算账户 {} 余额失败: {}", account, e);
                 error_count += 1;
             }
         }
     }
     
-    println!("余额计算完成: 成功 {} 个账户, 失败 {} 个账户", success_count, error_count);
+    info!("余额计算完成: 成功 {} 个账户, 失败 {} 个账户", success_count, error_count);
     Ok((success_count, error_count))
 }
 
@@ -140,11 +141,11 @@ pub async fn calculate_incremental_balances(
     token_decimals: u8,
 ) -> Result<(u64, u64), Box<dyn Error>> {
     if new_transactions.is_empty() {
-        println!("没有新交易需要计算余额");
+        debug!("没有新交易需要计算余额");
         return Ok((0, 0));
     }
     
-    println!("开始增量计算余额，共 {} 笔新交易", new_transactions.len());
+    info!("开始增量计算余额，共 {} 笔新交易", new_transactions.len());
     
     // 收集所有涉及的账户
     let mut affected_accounts = std::collections::HashSet::new();
@@ -184,18 +185,15 @@ pub async fn calculate_incremental_balances(
             },
             "notify" => {
                 // ICRC-3通知事件处理
-                // 对于通知事件，同样需要找出相关账户
-                // 这里需要根据通知的具体内容确定，通常通知发送方和接收方都需要处理
-                // 此处代码需要根据实际的ICRC-3实现来完善
-                println!("检测到通知事件，但ICRC-3实现尚未完成");
+                debug!("检测到通知事件，但ICRC-3实现尚未完成");
             },
             _ => {
-                println!("未知交易类型: {}, 跳过账户提取", tx.kind);
+                warn!("未知交易类型: {}, 跳过账户提取", tx.kind);
             }
         }
     }
     
-    println!("找到 {} 个受影响的账户需要更新余额", affected_accounts.len());
+    info!("找到 {} 个受影响的账户需要更新余额", affected_accounts.len());
     
     let mut success_count = 0u64;
     let mut error_count = 0u64;
@@ -205,7 +203,7 @@ pub async fn calculate_incremental_balances(
         let account_doc = match accounts_col.find_one(doc! { "account": &account }, None).await? {
             Some(doc) => doc,
             None => {
-                println!("找不到账户 {} 的记录", account);
+                error!("找不到账户 {} 的记录", account);
                 error_count += 1;
                 continue;
             }
@@ -220,22 +218,22 @@ pub async fn calculate_incremental_balances(
                     _ => None,
                 }).collect()
             } else {
-                println!("账户 {} 的交易索引不是数组格式", account);
+                error!("账户 {} 的交易索引不是数组格式", account);
                 error_count += 1;
                 continue;
             }
         } else {
-            println!("无法获取账户 {} 的交易索引", account);
+            error!("无法获取账户 {} 的交易索引", account);
             error_count += 1;
             continue;
         };
         
         if tx_indices.is_empty() {
-            println!("账户 {} 没有交易记录", account);
+            debug!("账户 {} 没有交易记录", account);
             continue;
         }
         
-        println!("正在重新计算账户 {} 的余额，共有 {} 笔交易", account, tx_indices.len());
+        info!("正在重新计算账户 {} 的余额，共有 {} 笔交易", account, tx_indices.len());
         
         // 计算该账户的余额
         match calculate_account_balance(&account, &tx_indices, tx_col, token_decimals).await {
@@ -243,24 +241,24 @@ pub async fn calculate_incremental_balances(
                 // 更新余额记录
                 match save_account_balance(balances_col, &account, &balance).await {
                     Ok(_) => {
-                        println!("账户 {} 余额更新完成: {} ({} 代币)", 
+                        info!("账户 {} 余额更新完成: {} ({} 代币)", 
                                 account, balance.0, format_token_amount(&balance, token_decimals));
                         success_count += 1;
                     },
                     Err(e) => {
-                        println!("保存账户 {} 余额失败: {}", account, e);
+                        error!("保存账户 {} 余额失败: {}", account, e);
                         error_count += 1;
                     }
                 }
             },
             Err(e) => {
-                println!("计算账户 {} 余额失败: {}", account, e);
+                error!("计算账户 {} 余额失败: {}", account, e);
                 error_count += 1;
             }
         }
     }
     
-    println!("增量余额计算完成: 成功更新 {} 个账户, 失败 {} 个账户", success_count, error_count);
+    info!("增量余额计算完成: 成功更新 {} 个账户, 失败 {} 个账户", success_count, error_count);
     Ok((success_count, error_count))
 }
 
@@ -288,7 +286,7 @@ async fn calculate_account_balance(
     let mut tx_cursor = tx_col.find(filter, options).await?;
     
     // 输出开始处理的信息，使用规范化账户
-    println!("正在计算账户 {} 的余额，共有 {} 笔交易", normalized_account, tx_indices.len());
+    info!("正在计算账户 {} 的余额，共有 {} 笔交易", normalized_account, tx_indices.len());
     
     // 遍历处理每一笔交易
     while tx_cursor.advance().await? {
@@ -300,7 +298,7 @@ async fn calculate_account_balance(
         let tx: Transaction = match mongodb::bson::from_document(tx_doc.clone()) {
             Ok(transaction) => transaction,
             Err(e) => {
-                println!("反序列化交易失败: {}", e);
+                error!("反序列化交易失败: {}", e);
                 continue;
             }
         };
@@ -309,36 +307,36 @@ async fn calculate_account_balance(
         if let Some(status) = tx_doc.get_str("status").ok() {
             if status != "COMPLETED" && status != "SUCCESS" {
                 let index = tx.index.unwrap_or(0);
-                println!("跳过未完成的交易 [索引:{}] [状态:{}]", index, status);
+                debug!("跳过未完成的交易 [索引:{}] [状态:{}]", index, status);
                 
                 // 记录交易类型以便更好地分析
                 match tx.kind.as_str() {
                     "transfer" => {
                         if let Some(ref transfer) = tx.transfer {
-                            println!("  - 跳过的转账交易: {} -> {} [金额:{}]",
+                            debug!("  - 跳过的转账交易: {} -> {} [金额:{}]",
                                 transfer.from, transfer.to, transfer.amount.0);
                         }
                     },
                     "mint" => {
                         if let Some(ref mint) = tx.mint {
-                            println!("  - 跳过的铸币交易: 接收方:{} [金额:{}]",
+                            debug!("  - 跳过的铸币交易: 接收方:{} [金额:{}]",
                                 mint.to, mint.amount.0);
                         }
                     },
                     "burn" => {
                         if let Some(ref burn) = tx.burn {
-                            println!("  - 跳过的销毁交易: 发送方:{} [金额:{}]",
+                            debug!("  - 跳过的销毁交易: 发送方:{} [金额:{}]",
                                 burn.from, burn.amount.0);
                         }
                     },
                     "approve" => {
                         if let Some(ref approve) = tx.approve {
-                            println!("  - 跳过的授权交易: {} 授权给 {} [金额:{}]",
+                            debug!("  - 跳过的授权交易: {} 授权给 {} [金额:{}]",
                                 approve.from, approve.spender, approve.amount.0);
                         }
                     },
                     _ => {
-                        println!("  - 跳过的未知类型交易: {}", tx.kind);
+                        debug!("  - 跳过的未知类型交易: {}", tx.kind);
                     }
                 }
                 continue;
@@ -393,9 +391,8 @@ async fn calculate_account_balance(
                     }
                     
                     // 如果是spender (转账授权代理)，则不直接影响余额
-                    // 但可以记录此操作，以便跟踪授权使用情况
                     if is_spender {
-                        println!("账户 {} 作为授权代理执行了从 {} 到 {} 的转账，金额: {}", 
+                        debug!("账户 {} 作为授权代理执行了从 {} 到 {} 的转账，金额: {}", 
                                 normalized_account, from_account, to_account, transfer.amount.0);
                     }
                 }
@@ -430,7 +427,7 @@ async fn calculate_account_balance(
                     
                     // 记录spender操作
                     if is_spender {
-                        println!("账户 {} 作为授权代理执行了从 {} 销毁代币的操作，金额: {}", 
+                        debug!("账户 {} 作为授权代理执行了从 {} 销毁代币的操作，金额: {}", 
                                 normalized_account, from_account, burn.amount.0);
                     }
                 }
@@ -454,19 +451,17 @@ async fn calculate_account_balance(
             },
             "notify" => {
                 // 处理ICRC-3标准的通知事件
-                // ICRC-3通知通常不影响余额，但可能包含重要信息
-                println!("处理通知事件 (索引:{}), 目前通知事件不影响余额", tx.index.unwrap_or(0));
-                // 这里需要根据具体的ICRC-3实现来处理
+                debug!("处理通知事件 (索引:{}), 目前通知事件不影响余额", tx.index.unwrap_or(0));
             },
             _ => {
-                println!("未知交易类型: {}, 跳过余额计算 (索引:{})", tx.kind, tx.index.unwrap_or(0));
+                warn!("未知交易类型: {}, 跳过余额计算 (索引:{})", tx.kind, tx.index.unwrap_or(0));
             }
         }
         
         processed_count += 1;
     }
     
-    println!("账户 {} 处理了 {} 笔交易，最终余额: {}", normalized_account, processed_count, balance.0);
+    info!("账户 {} 处理了 {} 笔交易，最终余额: {}", normalized_account, processed_count, balance.0);
     Ok(balance)
 }
 
@@ -475,7 +470,7 @@ fn safe_subtract_balance(balance: &mut Nat, amount: &Nat, warning_msg: &str) {
     if *balance >= *amount {
         *balance = balance.clone() - amount.clone();
     } else {
-        println!("警告: {}", warning_msg);
+        warn!("警告: {}", warning_msg);
         *balance = Nat::from(0u64);
     }
 }
@@ -553,14 +548,14 @@ async fn save_account_balance(
             Ok(_) => {
                 // 如果账户被规范化了，记录一下
                 if normalized_account != account {
-                    println!("账户 {} 已规范化为 {}", account, normalized_account);
+                    debug!("账户 {} 已规范化为 {}", account, normalized_account);
                 }
                 return Ok(());
             },
             Err(e) => {
                 retry_count += 1;
                 let wait_time = Duration::from_millis(500 * retry_count);
-                println!("更新账户余额失败 (尝试 {}/{}): {}，等待 {:?} 后重试",
+                warn!("更新账户余额失败 (尝试 {}/{}): {}，等待 {:?} 后重试",
                     retry_count, max_retries, e, wait_time);
                 tokio::time::sleep(wait_time).await;
             }
