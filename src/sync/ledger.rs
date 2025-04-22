@@ -74,9 +74,9 @@ pub async fn sync_ledger_transactions(
     // 使用增量同步方式查询新交易
     let mut current_index = latest_index + 1;
     let mut retry_count = 0;
-    let max_retries = 3;
+    let max_retries = 5;  // 增加最大重试次数
     let mut consecutive_empty = 0;
-    let max_consecutive_empty = 2; // 连续空结果次数阈值
+    let max_consecutive_empty = 3;  // 增加连续空结果阈值
     
     // 收集所有同步到的新交易
     let mut all_new_transactions = Vec::new();
@@ -84,6 +84,10 @@ pub async fn sync_ledger_transactions(
     // 跟踪最新的交易索引和时间戳
     let mut latest_tx_index = latest_index;
     let mut latest_tx_timestamp = 0;
+    
+    // 记录上次更新同步状态的索引
+    let mut last_status_update_index = latest_index;
+    let status_update_frequency: usize = 100;  // 每同步100笔交易更新一次状态
     
     // 尝试同步交易，每次获取一批
     while retry_count < max_retries && consecutive_empty < max_consecutive_empty {
@@ -121,6 +125,16 @@ pub async fn sync_ledger_transactions(
                         // 如果没有明确的新位置，小幅度向前尝试
                         current_index += BATCH_SIZE / 10; 
                         debug!("尝试从新位置 {} 查询", current_index);
+                    }
+                    
+                    // 检查是否应该更新同步状态 - 如果有新交易同步过
+                    if latest_tx_index > last_status_update_index {
+                        if let Err(e) = set_incremental_mode(sync_status_col, latest_tx_index, latest_tx_timestamp).await {
+                            warn!("连续空结果时更新同步状态失败: {}", e);
+                        } else {
+                            info!("已更新同步状态索引: {} -> {}", last_status_update_index, latest_tx_index);
+                            last_status_update_index = latest_tx_index;
+                        }
                     }
                     
                     // 短暂等待避免过快查询
@@ -185,12 +199,15 @@ pub async fn sync_ledger_transactions(
                 current_index += transactions.len() as u64;
                 retry_count = 0;
                 
-                // 定期更新同步状态
-                if latest_tx_index > latest_index && all_new_transactions.len() % 1000 == 0 {
+                // 更频繁地更新同步状态
+                if latest_tx_index > last_status_update_index && 
+                   ((latest_tx_index - last_status_update_index) as usize >= status_update_frequency || 
+                    all_new_transactions.len() % status_update_frequency == 0) {
                     if let Err(e) = set_incremental_mode(sync_status_col, latest_tx_index, latest_tx_timestamp).await {
-                        error!("更新同步状态失败: {}", e);
+                        warn!("更新同步状态失败: {}", e);
                     } else {
-                        info!("同步状态已更新至索引: {}", latest_tx_index);
+                        info!("已更新同步状态索引: {} -> {}", last_status_update_index, latest_tx_index);
+                        last_status_update_index = latest_tx_index;
                     }
                 }
                 
@@ -203,10 +220,38 @@ pub async fn sync_ledger_transactions(
                 
                 // 错误恢复策略
                 if retry_count >= max_retries {
-                    warn!("达到最大重试次数，尝试跳过当前批次...");
-                    current_index += BATCH_SIZE / 2; // 跳过部分索引，尝试继续
-                    retry_count = 0;
-                    consecutive_empty = 0;
+                    // 检查是否有已获取的交易记录
+                    if latest_tx_index > last_status_update_index {
+                        warn!("达到最大重试次数但已有部分交易，将保存当前同步状态后重试...");
+                        
+                        // 保存当前同步状态
+                        if let Err(status_err) = set_incremental_mode(sync_status_col, latest_tx_index, latest_tx_timestamp).await {
+                            error!("错误恢复时保存同步状态失败: {}", status_err);
+                        } else {
+                            info!("错误恢复：已保存同步状态至索引 {}", latest_tx_index);
+                            last_status_update_index = latest_tx_index;
+                        }
+                        
+                        warn!("尝试跳过当前批次继续同步...");
+                        current_index += BATCH_SIZE / 4; // 跳过部分索引，尝试继续
+                        retry_count = 0; // 重置重试计数
+                        consecutive_empty = 0; // 重置连续空计数
+                        
+                        // 等待较长时间后重试
+                        let wait_time = Duration::from_secs(5);
+                        info!("等待 {:?} 后继续同步", wait_time);
+                        tokio::time::sleep(wait_time).await;
+                    } else {
+                        warn!("达到最大重试次数，尝试跳过当前批次...");
+                        current_index += BATCH_SIZE / 4; // 跳过部分索引，尝试继续
+                        retry_count = 0;
+                        consecutive_empty = 0;
+                        
+                        // 指数退避
+                        let wait_time = Duration::from_secs(5);
+                        debug!("等待 {:?} 后重试", wait_time);
+                        tokio::time::sleep(wait_time).await;
+                    }
                 } else {
                     // 指数退避
                     let wait_time = Duration::from_secs(2u64.pow(retry_count as u32));
@@ -226,8 +271,10 @@ pub async fn sync_ledger_transactions(
         if let Err(e) = set_incremental_mode(sync_status_col, latest_tx_index, latest_tx_timestamp).await {
             error!("最终更新同步状态失败: {}", e);
         } else {
-            info!("同步状态已更新至最新索引: {}", latest_tx_index);
+            info!("同步状态已更新至最新索引: {} (共同步 {} 笔新交易)", latest_tx_index, all_new_transactions.len());
         }
+    } else {
+        info!("无新交易，保持同步状态在索引: {}", latest_index);
     }
     
     info!("交易同步完成，当前索引: {}, 共同步 {} 笔新交易", current_index - 1, all_new_transactions.len());

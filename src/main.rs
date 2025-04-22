@@ -21,6 +21,8 @@ use crate::sync::{sync_ledger_transactions, sync_archive_transactions};
 use crate::sync::admin::{reset_and_sync_all_transactions, calculate_all_balances};
 use crate::db::balances::calculate_incremental_balances;
 use crate::db::sync_status::{get_sync_status, set_incremental_mode};
+use crate::db::transactions::get_latest_transaction_index;
+use chrono;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn Error>> {
@@ -231,10 +233,15 @@ async fn run_application(cfg: models::Config) -> Result<(), Box<dyn Error>> {
     }
     
     // 检查同步状态，确定是否需要初始同步
-    let needs_initial_sync = match get_sync_status(&db_conn.sync_status_col).await {
+    let sync_status = get_sync_status(&db_conn.sync_status_col).await;
+    let needs_initial_sync = match &sync_status {
         Ok(Some(status)) => {
             if status.sync_mode == "incremental" && status.last_synced_index > 0 {
-                info!("检测到有效的同步状态，上次同步索引：{}，将继续增量同步", status.last_synced_index);
+                info!("检测到有效的同步状态，上次同步索引：{}，上次同步时间：{}，将继续增量同步", 
+                      status.last_synced_index, 
+                      chrono::DateTime::from_timestamp(status.updated_at, 0)
+                         .unwrap_or_else(|| chrono::Utc::now())
+                         .format("%Y-%m-%d %H:%M:%S"));
                 false
             } else {
                 info!("同步状态无效或为全量模式，需要进行初始同步");
@@ -299,7 +306,47 @@ async fn run_application(cfg: models::Config) -> Result<(), Box<dyn Error>> {
         }
         
         info!("初始同步和余额计算完成，将开始实时监控新交易");
-    } else {
+    } else if let Ok(Some(status)) = sync_status {
+        // 检查是否需要验证同步状态的完整性
+        info!("从断点继续同步，验证同步状态的完整性...");
+        
+        // 检查数据库中最新交易索引与同步状态是否一致
+        match get_latest_transaction_index(&db_conn.tx_col).await {
+            Ok(Some(db_latest_index)) => {
+                if db_latest_index < status.last_synced_index {
+                    warn!("数据库最新交易索引 ({}) 小于同步状态记录的索引 ({}), 可能有数据丢失", 
+                         db_latest_index, status.last_synced_index);
+                    info!("将从数据库最新索引开始重新同步...");
+                    
+                    // 更新同步状态为数据库的最新索引
+                    if let Err(e) = set_incremental_mode(
+                        &db_conn.sync_status_col,
+                        db_latest_index,
+                        status.last_synced_timestamp
+                    ).await {
+                        error!("更新同步状态失败: {}", e);
+                    }
+                } else if db_latest_index > status.last_synced_index {
+                    info!("数据库最新交易索引 ({}) 大于同步状态记录的索引 ({}), 将更新同步状态", 
+                          db_latest_index, status.last_synced_index);
+                    
+                    // 更新同步状态为数据库的最新索引
+                    if let Err(e) = set_incremental_mode(
+                        &db_conn.sync_status_col,
+                        db_latest_index,
+                        status.last_synced_timestamp
+                    ).await {
+                        error!("更新同步状态失败: {}", e);
+                    }
+                } else {
+                    info!("同步状态与数据库记录一致，索引: {}", db_latest_index);
+                }
+            },
+            _ => {
+                warn!("无法获取数据库最新交易索引，将使用同步状态记录的索引");
+            }
+        }
+        
         info!("跳过初始同步，直接进入增量同步模式");
     }
     

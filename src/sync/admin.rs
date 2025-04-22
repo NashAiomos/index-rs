@@ -100,7 +100,15 @@ pub async fn reset_and_sync_all_transactions(
     }
     
     // 设置为增量同步模式，并保存最新同步状态
-    set_incremental_mode(&db_conn.sync_status_col, latest_index, latest_timestamp).await?;
+    if latest_index > 0 {
+        info!("重置完成：设置增量同步模式，最新索引: {}, 时间戳: {}", 
+              latest_index, latest_timestamp);
+        set_incremental_mode(&db_conn.sync_status_col, latest_index, latest_timestamp).await?;
+    } else {
+        warn!("重置完成但未找到有效交易，保持全量同步模式");
+        // 即使没有交易，也将同步模式设置为增量，避免重复全量同步
+        set_incremental_mode(&db_conn.sync_status_col, 0, 0).await?;
+    }
     
     info!("数据库重置和交易同步完成，所有账户余额已根据交易记录重新计算！");
     info!("下次运行将从索引 {} 开始增量同步", latest_index + 1);
