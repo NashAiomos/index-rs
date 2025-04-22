@@ -1,6 +1,7 @@
 use std::error::Error;
 use mongodb::{Client, options::ClientOptions, Collection, Database};
-use mongodb::bson::{Document, doc};
+use mongodb::bson::Document;
+use log::{info, error};
 
 pub mod transactions;
 pub mod accounts;
@@ -22,7 +23,7 @@ pub async fn init_db(mongodb_url: &str, database_name: &str) -> Result<DbConnect
     let client_options = match ClientOptions::parse(mongodb_url).await {
         Ok(options) => options,
         Err(e) => {
-            eprintln!("MongoDB连接字符串解析失败: {}", e);
+            error!("MongoDB连接字符串解析失败: {}", e);
             return Err(Box::new(e));
         }
     };
@@ -30,12 +31,12 @@ pub async fn init_db(mongodb_url: &str, database_name: &str) -> Result<DbConnect
     let mongo_client = match Client::with_options(client_options) {
         Ok(client) => client,
         Err(e) => {
-            eprintln!("无法连接到MongoDB: {}", e);
+            error!("无法连接到MongoDB: {}", e);
             return Err(Box::new(e));
         }
     };
     
-    println!("已连接到MongoDB");
+    info!("已连接到MongoDB");
     
     let db = mongo_client.database(database_name);
     let accounts_col: Collection<Document> = db.collection("accounts");
@@ -54,7 +55,7 @@ pub async fn init_db(mongodb_url: &str, database_name: &str) -> Result<DbConnect
 
 /// 创建数据库索引
 pub async fn create_indexes(conn: &DbConnection) -> Result<(), Box<dyn Error>> {
-    println!("创建或确认数据库索引...");
+    info!("创建或确认数据库索引...");
     
     // 交易索引
     match conn.tx_col.create_index(
@@ -64,8 +65,8 @@ pub async fn create_indexes(conn: &DbConnection) -> Result<(), Box<dyn Error>> {
             .build(),
         None
     ).await {
-        Ok(_) => println!("交易索引创建成功"),
-        Err(e) => eprintln!("交易索引创建失败: {}", e)
+        Ok(_) => info!("交易索引创建成功"),
+        Err(e) => error!("交易索引创建失败: {}", e)
     }
     
     // 账户索引
@@ -75,8 +76,8 @@ pub async fn create_indexes(conn: &DbConnection) -> Result<(), Box<dyn Error>> {
             .build(),
         None
     ).await {
-        Ok(_) => println!("账户索引创建成功"),
-        Err(e) => eprintln!("账户索引创建失败: {}", e)
+        Ok(_) => info!("账户索引创建成功"),
+        Err(e) => error!("账户索引创建失败: {}", e)
     }
     
     // 余额索引
@@ -87,8 +88,8 @@ pub async fn create_indexes(conn: &DbConnection) -> Result<(), Box<dyn Error>> {
             .build(),
         None
     ).await {
-        Ok(_) => println!("余额索引创建成功"),
-        Err(e) => eprintln!("余额索引创建失败: {}", e)
+        Ok(_) => info!("余额索引创建成功"),
+        Err(e) => error!("余额索引创建失败: {}", e)
     }
     
     // 同步状态索引
@@ -99,8 +100,8 @@ pub async fn create_indexes(conn: &DbConnection) -> Result<(), Box<dyn Error>> {
             .build(),
         None
     ).await {
-        Ok(_) => println!("同步状态索引创建成功"),
-        Err(e) => eprintln!("同步状态索引创建失败: {}", e)
+        Ok(_) => info!("同步状态索引创建成功"),
+        Err(e) => error!("同步状态索引创建失败: {}", e)
     }
     
     Ok(())

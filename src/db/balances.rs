@@ -8,7 +8,8 @@ use num_traits::Zero;
 use crate::models::Transaction;
 use crate::utils::{create_error, format_token_amount};
 
-/// 查询账户余额
+/// 获取账户余额
+#[allow(dead_code)]
 pub async fn get_account_balance(
     balances_col: &Collection<Document>,
     account: &str,

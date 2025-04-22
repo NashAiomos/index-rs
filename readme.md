@@ -32,7 +32,65 @@ database = "ledger"
 ic_url = "https://icp0.io"
 ledger_canister_id = "your-canister-id"
 token_decimals = 8  # 可选，如果不设置会自动从canister查询
+
+# 日志配置
+[log]
+# 日志级别: error, warn, info, debug, trace
+level = "info"
+# 日志文件路径
+file = "logs/index-rs.log"
+# 控制台日志级别 (可选，默认为warn)
+console_level = "warn"
+# 是否启用文件日志
+file_enabled = true
+# 日志文件最大大小(MB)
+max_size = 10
+# 保留的历史日志文件数量
+max_files = 5
 ```
+
+## 日志配置
+
+程序使用灵活的日志系统，可以同时输出到控制台和文件：
+
+### 配置文件设置
+
+在 `config.toml` 中可以配置日志行为：
+- **level**: 文件日志级别 (error, warn, info, debug, trace)
+- **file**: 日志文件路径，会自动创建目录
+- **console_level**: 控制台日志级别，默认为 warn，只显示警告和错误
+- **file_enabled**: 是否启用文件日志
+- **max_size**: 日志文件最大大小(MB)
+- **max_files**: 保留的历史日志文件数量
+
+### 通过环境变量配置
+
+也可以通过设置环境变量`RUST_LOG`来临时调整日志级别：
+
+```bash
+# 显示所有级别的日志
+RUST_LOG=trace cargo run
+
+# 显示调试级别及以上的日志
+RUST_LOG=debug cargo run
+
+# 默认只显示信息级别及以上的日志
+RUST_LOG=info cargo run
+
+# 只显示警告和错误
+RUST_LOG=warn cargo run
+
+# 只显示错误
+RUST_LOG=error cargo run
+```
+
+也可以为特定模块设置日志级别：
+```bash
+# 为sync模块设置debug级别，其它模块使用info级别
+RUST_LOG=info,index_rs::sync=debug cargo run
+```
+
+环境变量的优先级高于配置文件，适合临时调试使用。
 
 ## 交易同步流程
 
@@ -57,6 +115,7 @@ src/
 │   ├── transactions.rs # 交易数据操作
 │   ├── accounts.rs     # 账户数据操作
 │   ├── balances.rs     # 余额数据操作
+│   ├── sync_status.rs  # 同步状态管理
 ├── sync/
 │   ├── mod.rs          # 同步模块入口
 │   ├── ledger.rs       # 主账本同步
@@ -66,11 +125,12 @@ src/
 
 ## 数据库集合
 
-程序维护三个主要集合：
+程序维护四个主要集合：
 
 1. **transactions**: 存储所有交易记录
 2. **accounts**: 记录账户与交易的关系
 3. **balances**: 存储每个账户的最新余额信息
+4. **sync_status**: 保存同步状态，支持增量同步
 
 ## 构建与运行
 
@@ -115,9 +175,13 @@ src/
    
    每 5 秒自动检查一次主账本是否有新交易，并同步到数据库中。
 
-6. **丰富的日志信息**
+6. **同步状态保存**
    
-   程序运行过程中记录详细的日志，便于追踪同步进度和问题诊断。
+   程序会保存同步状态，确保重启后能从上次同步点继续，避免重复处理交易。
+
+7. **完善的日志记录**
+   
+   支持多级别、多目标的日志记录，方便监控和问题排查。控制台仅显示重要信息，详细日志保存到文件。
 
 ## 管理员功能
 

@@ -1,6 +1,7 @@
 use std::error::Error;
 use mongodb::{Collection, bson::{doc, to_bson}};
 use mongodb::bson::Document;
+use log::{info, error, warn};
 use tokio::time::Duration;
 use crate::models::Transaction;
 use crate::utils::create_error;
@@ -16,7 +17,7 @@ pub async fn save_transaction(
     let tx_bson = match to_bson(tx) {
         Ok(bson) => bson,
         Err(e) => {
-            println!("无法将交易转换为BSON: {}，索引: {}", e, index);
+            error!("无法将交易转换为BSON: {}，索引: {}", e, index);
             return Err(create_error(&format!("将交易(索引:{})转换为BSON失败: {}", index, e)));
         }
     };
@@ -24,7 +25,7 @@ pub async fn save_transaction(
     let doc = match tx_bson.as_document() {
         Some(doc) => doc.clone(),
         None => {
-            println!("无法将BSON转换为Document，索引: {}", index);
+            error!("无法将BSON转换为Document，索引: {}", index);
             return Err(create_error(&format!("无法将BSON转换为Document，索引: {}", index)));
         }
     };
@@ -44,7 +45,7 @@ pub async fn save_transaction(
             Err(e) => {
                 retry_count += 1;
                 let wait_time = Duration::from_millis(500 * retry_count);
-                println!("保存交易(索引:{})失败 (尝试 {}/{}): {}，等待 {:?} 后重试",
+                warn!("保存交易(索引:{})失败 (尝试 {}/{}): {}，等待 {:?} 后重试",
                     index, retry_count, max_retries, e, wait_time);
                 tokio::time::sleep(wait_time).await;
             }
@@ -75,11 +76,11 @@ pub async fn get_latest_transaction_index(
 pub async fn clear_transactions(tx_col: &Collection<Document>) -> Result<u64, Box<dyn Error>> {
     match tx_col.delete_many(doc! {}, None).await {
         Ok(result) => {
-            println!("已清除 {} 条交易记录", result.deleted_count);
+            info!("已清除 {} 条交易记录", result.deleted_count);
             Ok(result.deleted_count)
         },
         Err(e) => {
-            println!("清除交易集合失败: {}", e);
+            error!("清除交易集合失败: {}", e);
             Err(create_error(&format!("清除交易集合失败: {}", e)))
         }
     }

@@ -184,6 +184,18 @@ pub struct BalanceRecord {
     pub last_tx_index: u64, // 最后处理的交易索引
 }
 
+// 日志配置结构体
+#[derive(Debug, Deserialize, Clone)]
+#[allow(dead_code)]
+pub struct LogConfig {
+    pub level: String,            // 日志级别: error, warn, info, debug, trace
+    pub file: String,             // 日志文件路径
+    pub console_level: String,    // 控制台日志级别
+    pub file_enabled: bool,       // 是否启用文件日志
+    pub max_size: u64,            // 日志文件最大大小(MB)
+    pub max_files: u32,           // 保留的历史日志文件数量
+}
+
 // 配置结构体
 #[derive(Debug, Deserialize, Clone)]
 pub struct Config {
@@ -192,4 +204,11 @@ pub struct Config {
     pub ledger_canister_id: String,
     pub ic_url: String,
     pub token_decimals: Option<u8>, // 可选配置，如果未指定则查询获取
+    pub log: Option<LogConfig>,    // 日志配置
+}
+
+// 命令行参数结构体
+#[derive(Debug, Clone)]
+pub struct AppArgs {
+    pub reset: bool,
 } 

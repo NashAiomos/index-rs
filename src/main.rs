@@ -6,8 +6,15 @@ mod db;
 mod sync;
 
 use std::error::Error;
+use std::fs;
 use tokio::time::interval;
 use tokio::time::Duration;
+use log::{info, error, warn, debug, LevelFilter};
+use log4rs::append::console::{ConsoleAppender, Target};
+use log4rs::append::file::FileAppender;
+use log4rs::encode::pattern::PatternEncoder;
+use log4rs::config::{Appender, Config as LogConfig, Root};
+use log4rs::filter::threshold::ThresholdFilter;
 use crate::config::{load_config, parse_args, parse_canister_id, create_agent, get_token_decimals};
 use crate::db::{init_db, create_indexes};
 use crate::sync::{sync_ledger_transactions, sync_archive_transactions};
@@ -17,28 +24,144 @@ use crate::db::sync_status::{get_sync_status, set_incremental_mode};
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn Error>> {
+    // 首先设置日志系统（在加载配置之前）
+    setup_default_logger();
+    
+    // 读取配置文件
+    let cfg = load_config().await?;
+    
+    // 用配置信息更新日志系统
+    if let Err(e) = setup_logger(&cfg) {
+        eprintln!("警告: 无法设置日志系统: {}", e);
+        // 继续执行，使用默认日志设置
+    }
+    
+    info!("正在启动区块链索引服务...");
+    
     // 设置全局错误捕获
-    let result = run_application().await;
+    let result = run_application(cfg).await;
     
     // 处理顶层错误
     if let Err(e) = &result {
-        eprintln!("程序执行过程中发生错误: {}", e);
+        error!("程序执行过程中发生错误: {}", e);
         // 可以在这里添加额外的错误处理逻辑，如发送警报通知等
     }
     
     result
 }
 
+/// 设置默认日志系统
+fn setup_default_logger() {
+    let stdout = ConsoleAppender::builder()
+        .target(Target::Stdout)
+        .encoder(Box::new(PatternEncoder::new("[{d(%Y-%m-%d %H:%M:%S)}] [{l}] - {m}{n}")))
+        .build();
+    
+    if let Ok(config) = LogConfig::builder()
+        .appender(Appender::builder().build("stdout", Box::new(stdout)))
+        .build(Root::builder().appender("stdout").build(LevelFilter::Info)) {
+        
+        // 使用try_init防止多次初始化错误
+        let _ = log4rs::init_config(config);
+    }
+}
+
+/// 根据配置设置日志系统
+fn setup_logger(cfg: &models::Config) -> Result<(), Box<dyn Error>> {
+    // 获取日志配置
+    let log_cfg = match &cfg.log {
+        Some(log_config) => log_config,
+        None => {
+            // 没有日志配置，继续使用默认配置
+            return Ok(());
+        }
+    };
+    
+    // 设置日志级别
+    let log_level = match log_cfg.level.to_lowercase().as_str() {
+        "error" => LevelFilter::Error,
+        "warn" => LevelFilter::Warn,
+        "info" => LevelFilter::Info,
+        "debug" => LevelFilter::Debug,
+        "trace" => LevelFilter::Trace,
+        _ => LevelFilter::Info,
+    };
+    
+    // 设置控制台日志级别
+    let console_level = match log_cfg.console_level.to_lowercase().as_str() {
+        "error" => LevelFilter::Error,
+        "warn" => LevelFilter::Warn,
+        "info" => LevelFilter::Info,
+        "debug" => LevelFilter::Debug,
+        "trace" => LevelFilter::Trace,
+        _ => LevelFilter::Warn,
+    };
+    
+    // 创建控制台输出
+    let stdout = ConsoleAppender::builder()
+        .target(Target::Stdout)
+        .encoder(Box::new(PatternEncoder::new("[{d(%Y-%m-%d %H:%M:%S)}] [{l}] - {m}{n}")))
+        .build();
+    
+    // 确保日志目录存在
+    if log_cfg.file_enabled {
+        let log_dir = std::path::Path::new(&log_cfg.file).parent()
+            .ok_or("无效的日志文件路径")?;
+        
+        if !log_dir.exists() {
+            fs::create_dir_all(log_dir)?;
+        }
+    }
+    
+    // 构建日志配置
+    let mut config_builder = LogConfig::builder()
+        .appender(
+            Appender::builder()
+                .filter(Box::new(ThresholdFilter::new(console_level)))
+                .build("stdout", Box::new(stdout))
+        );
+    
+    let mut root_builder = Root::builder();
+    
+    // 添加控制台日志
+    root_builder = root_builder.appender("stdout");
+    
+    // 如果启用了文件日志，添加文件输出
+    if log_cfg.file_enabled {
+        let file = FileAppender::builder()
+            .encoder(Box::new(PatternEncoder::new("[{d(%Y-%m-%d %H:%M:%S)}] [{l}] - {m}{n}")))
+            .build(&log_cfg.file)?;
+        
+        config_builder = config_builder.appender(
+            Appender::builder()
+                .filter(Box::new(ThresholdFilter::new(log_level)))
+                .build("file", Box::new(file))
+        );
+        
+        root_builder = root_builder.appender("file");
+    }
+    
+    // 应用日志配置
+    let log_config = config_builder
+        .build(root_builder.build(log_level))?;
+    
+    // 使用handle_error确保失败时不会导致程序崩溃
+    if let Err(e) = log4rs::init_config(log_config) {
+        eprintln!("警告: 无法更新日志配置: {}", e);
+    }
+    
+    Ok(())
+}
+
 // 将主要应用逻辑移到独立函数，便于错误处理
-async fn run_application() -> Result<(), Box<dyn Error>> {
-    println!("启动索引服务...");
+async fn run_application(cfg: models::Config) -> Result<(), Box<dyn Error>> {
+    info!("启动索引服务...");
     
     // 获取命令行参数
-    let reset_mode = parse_args();
+    let args = models::AppArgs { reset: std::env::args().any(|arg| arg == "--reset") };
+    let _ = parse_args(&args).await?;
+    let reset_mode = args.reset;
     
-    // 读取配置文件
-    let cfg = load_config().await?;
-
     // 初始化 MongoDB
     let db_conn = init_db(&cfg.mongodb_url, &cfg.database).await?;
     
@@ -51,33 +174,33 @@ async fn run_application() -> Result<(), Box<dyn Error>> {
     // 获取代币小数位数
     let token_decimals = match cfg.token_decimals {
         Some(decimals) => {
-            println!("使用配置文件中指定的代币小数位: {}", decimals);
+            info!("使用配置文件中指定的代币小数位: {}", decimals);
             decimals
         },
         None => {
             // 尝试从canister查询小数位数
             match get_token_decimals(&agent, &canister_id).await {
                 Ok(decimals) => {
-                    println!("从canister查询到代币小数位: {}", decimals);
+                    info!("从canister查询到代币小数位: {}", decimals);
                     decimals
                 },
         Err(e) => {
-                    println!("查询代币小数位失败: {}, 使用默认值{}", e, models::DEFAULT_DECIMALS);
+                    warn!("查询代币小数位失败: {}, 使用默认值{}", e, models::DEFAULT_DECIMALS);
                     models::DEFAULT_DECIMALS
                 }
             }
         }
     };
-    println!("代币小数位设置为: {}", token_decimals);
+    info!("代币小数位设置为: {}", token_decimals);
 
     // 创建索引以提高查询性能
     create_indexes(&db_conn).await?;
 
     // 如果是重置模式，执行完整的数据库重置和重新同步
     if reset_mode {
-        println!("开始执行数据库重置和重新同步操作...");
+        info!("开始执行数据库重置和重新同步操作...");
         reset_and_sync_all_transactions(&agent, &canister_id, &db_conn, token_decimals).await?;
-        println!("数据库重置和重新同步成功完成！");
+        info!("数据库重置和重新同步成功完成！");
         return Ok(());
     }
     
@@ -85,15 +208,15 @@ async fn run_application() -> Result<(), Box<dyn Error>> {
     let needs_initial_sync = match get_sync_status(&db_conn.sync_status_col).await {
         Ok(Some(status)) => {
             if status.sync_mode == "incremental" && status.last_synced_index > 0 {
-                println!("检测到有效的同步状态，上次同步索引：{}，将继续增量同步", status.last_synced_index);
+                info!("检测到有效的同步状态，上次同步索引：{}，将继续增量同步", status.last_synced_index);
                 false
             } else {
-                println!("同步状态无效或为全量模式，需要进行初始同步");
+                info!("同步状态无效或为全量模式，需要进行初始同步");
                 true
             }
         },
         _ => {
-            println!("未找到同步状态记录，将进行初始同步");
+            info!("未找到同步状态记录，将进行初始同步");
             true
         }
     };
@@ -101,7 +224,7 @@ async fn run_application() -> Result<(), Box<dyn Error>> {
     // 如果需要初始同步，执行全量同步流程
     if needs_initial_sync {
         // 正常模式：先同步所有交易，再统一计算余额
-        println!("阶段1：同步所有交易数据...");
+        info!("阶段1：同步所有交易数据...");
         
         // 先同步归档数据
         let _archives_result = sync_archive_transactions(
@@ -115,7 +238,7 @@ async fn run_application() -> Result<(), Box<dyn Error>> {
         ).await?;
         
         // 同步主账本数据
-        println!("开始同步ledger交易...");
+        info!("开始同步ledger交易...");
         let ledger_txs = if let Ok(txs) = sync_ledger_transactions(
             &agent,
             &canister_id, 
@@ -127,19 +250,19 @@ async fn run_application() -> Result<(), Box<dyn Error>> {
         ).await {
             txs
         } else {
-            eprintln!("同步ledger交易时发生错误，继续执行后续逻辑");
+            error!("同步ledger交易时发生错误，继续执行后续逻辑");
             Vec::new()
         };
         
         // 阶段2：使用新算法根据账户交易记录计算余额
-        println!("阶段2：根据账户交易记录统一计算余额...");
+        info!("阶段2：根据账户交易记录统一计算余额...");
         calculate_all_balances(&db_conn, token_decimals).await?;
         
         // 设置增量同步模式
         if !ledger_txs.is_empty() {
             if let Some(last_tx) = ledger_txs.last() {
                 if let Some(index) = last_tx.index {
-                    println!("设置增量同步起点为最后一笔交易索引: {}", index);
+                    info!("设置增量同步起点为最后一笔交易索引: {}", index);
                     set_incremental_mode(
                         &db_conn.sync_status_col, 
                         index, 
@@ -149,13 +272,13 @@ async fn run_application() -> Result<(), Box<dyn Error>> {
             }
         }
         
-        println!("初始同步和余额计算完成，将开始实时监控新交易");
+        info!("初始同步和余额计算完成，将开始实时监控新交易");
     } else {
-        println!("跳过初始同步，直接进入增量同步模式");
+        info!("跳过初始同步，直接进入增量同步模式");
     }
     
     // 定时增量同步
-    println!("开始实时监控新交易");
+    info!("开始实时监控新交易");
     let mut interval = interval(Duration::from_secs(5));
     let mut consecutive_errors = 0;
     let max_consecutive_errors = 5;
@@ -163,7 +286,7 @@ async fn run_application() -> Result<(), Box<dyn Error>> {
     loop {
         interval.tick().await;
         
-        println!("\n执行定时增量同步...");
+        debug!("执行定时增量同步...");
         
         // 增量同步交易数据
         match sync_ledger_transactions(
@@ -178,7 +301,7 @@ async fn run_application() -> Result<(), Box<dyn Error>> {
             Ok(new_transactions) => {
                 // 同步完成后，只计算新交易相关账户的余额
                 if !new_transactions.is_empty() {
-                    println!("增量同步获取到 {} 笔新交易，计算相关账户余额...", new_transactions.len());
+                    info!("增量同步获取到 {} 笔新交易，计算相关账户余额...", new_transactions.len());
                     match calculate_incremental_balances(
                         &new_transactions,
                         &db_conn.tx_col,
@@ -187,25 +310,25 @@ async fn run_application() -> Result<(), Box<dyn Error>> {
                         token_decimals
                     ).await {
                         Ok((success, error)) => {
-                            println!("增量余额计算完成: 更新了 {} 个账户, 失败 {} 个账户", success, error);
+                            info!("增量余额计算完成: 更新了 {} 个账户, 失败 {} 个账户", success, error);
                             consecutive_errors = 0; // 重置错误计数
                         },
                         Err(e) => {
-                            eprintln!("增量计算余额时出错: {}", e);
+                            error!("增量计算余额时出错: {}", e);
                             consecutive_errors += 1;
                         }
                     }
                 } else {
-                    println!("没有获取到新交易，跳过余额计算");
+                    debug!("没有获取到新交易，跳过余额计算");
                     consecutive_errors = 0; // 重置错误计数
                 }
             },
             Err(e) => {
                 consecutive_errors += 1;
-                eprintln!("定时增量同步出错 ({}/{}): {}", consecutive_errors, max_consecutive_errors, e);
+                error!("定时增量同步出错 ({}/{}): {}", consecutive_errors, max_consecutive_errors, e);
                 
                 if consecutive_errors >= max_consecutive_errors {
-                    eprintln!("连续错误次数达到上限 ({}), 等待更长时间后继续...", max_consecutive_errors);
+                    error!("连续错误次数达到上限 ({}), 等待更长时间后继续...", max_consecutive_errors);
                     // 发生多次连续错误时，等待更长时间再重试
                     tokio::time::sleep(Duration::from_secs(30)).await;
                     consecutive_errors = 0; // 重置计数

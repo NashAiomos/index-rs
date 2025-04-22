@@ -1,19 +1,21 @@
 use std::error::Error;
 use config as config_rs;
-use std::env;
 use ic_agent::export::Principal;
 use candid::{Encode, Decode};
 use ic_agent::Agent;
+use log::{info, error, warn};
 use crate::models::{Config as AppConfig, DEFAULT_DECIMALS};
 use crate::utils::create_error;
 
 /// 加载应用配置
 pub async fn load_config() -> Result<AppConfig, Box<dyn Error>> {
+    // 注意：不在这里初始化日志系统，而在main.rs里统一处理
     let settings = match config_rs::Config::builder()
         .add_source(config_rs::File::with_name("config"))
         .build() {
         Ok(config) => config,
         Err(e) => {
+            // 在日志系统初始化前，使用标准错误输出
             eprintln!("无法读取配置文件: {}", e);
             return Err(create_error(&format!("配置文件错误: {}", e)));
         }
@@ -27,22 +29,19 @@ pub async fn load_config() -> Result<AppConfig, Box<dyn Error>> {
         }
     };
 
-    println!("配置加载完成: MongoDB={}, 数据库={}, Ledger Canister={}",
+    // 在这个阶段日志系统可能尚未初始化完成，先不使用日志输出
+    eprintln!("配置加载完成: MongoDB={}, 数据库={}, Ledger Canister={}",
         cfg.mongodb_url, cfg.database, cfg.ledger_canister_id);
     
     Ok(cfg)
 }
 
 /// 解析命令行参数
-pub fn parse_args() -> bool {
-    let args: Vec<String> = env::args().collect();
-    let reset_mode = args.len() > 1 && args[1] == "--reset";
-    
-    if reset_mode {
-        println!("检测到 --reset 参数，将重置数据库并重新同步所有交易");
+pub async fn parse_args(args: &crate::models::AppArgs) -> Result<(), Box<dyn Error>> {
+    if args.reset {
+        info!("检测到重置参数 --reset");
     }
-    
-    reset_mode
+    Ok(())
 }
 
 /// 查询代币小数位数
@@ -50,14 +49,14 @@ pub async fn get_token_decimals(
     agent: &Agent,
     canister_id: &Principal,
 ) -> Result<u8, Box<dyn Error>> {
-    println!("查询代币小数位数...");
+    info!("查询代币小数位数...");
     
     // 调用icrc1_decimals方法
     let empty_args = ();
     let arg_bytes = match Encode!(&empty_args) {
         Ok(bytes) => bytes,
         Err(e) => {
-            println!("编码参数失败: {}", e);
+            error!("编码参数失败: {}", e);
             return Err(create_error(&format!("参数编码失败: {}", e)));
         }
     };
@@ -74,11 +73,11 @@ pub async fn get_token_decimals(
             Ok(response) => {
                 match Decode!(&response, u8) {
                     Ok(decimals) => {
-                        println!("代币小数位数: {}", decimals);
+                        info!("代币小数位数: {}", decimals);
                         return Ok(decimals);
                     },
                     Err(e) => {
-                        println!("解析decimals响应失败: {}, 使用默认值{}", e, DEFAULT_DECIMALS);
+                        warn!("解析decimals响应失败: {}, 使用默认值{}", e, DEFAULT_DECIMALS);
                         return Ok(DEFAULT_DECIMALS);
                     }
                 }
@@ -86,14 +85,14 @@ pub async fn get_token_decimals(
             Err(e) => {
                 retry_count += 1;
                 let wait_time = std::time::Duration::from_secs(2 * retry_count);
-                println!("查询decimals失败 (尝试 {}/{}): {}, 等待 {:?} 后重试", 
+                warn!("查询decimals失败 (尝试 {}/{}): {}, 等待 {:?} 后重试", 
                     retry_count, max_retries, e, wait_time);
                 tokio::time::sleep(wait_time).await;
             }
         }
     }
     
-    println!("查询decimals达到最大重试次数，使用默认值{}", DEFAULT_DECIMALS);
+    warn!("查询decimals达到最大重试次数，使用默认值{}", DEFAULT_DECIMALS);
     Ok(DEFAULT_DECIMALS)
 }
 
@@ -103,11 +102,11 @@ pub fn create_agent(ic_url: &str) -> Result<Agent, Box<dyn Error>> {
         .with_url(ic_url)
         .build() {
         Ok(a) => {
-            println!("IC Agent初始化完成，连接到: {}", ic_url);
+            info!("IC Agent初始化完成，连接到: {}", ic_url);
             Ok(a)
         },
         Err(e) => {
-            eprintln!("无法初始化IC Agent: {}", e);
+            error!("无法初始化IC Agent: {}", e);
             Err(Box::new(e))
         }
     }
@@ -118,7 +117,7 @@ pub fn parse_canister_id(canister_id_text: &str) -> Result<Principal, Box<dyn Er
     match Principal::from_text(canister_id_text) {
         Ok(id) => Ok(id),
         Err(e) => {
-            eprintln!("无效的Canister ID格式: {}", e);
+            error!("无效的Canister ID格式: {}", e);
             Err(create_error(&format!("无效的Canister ID: {}", e)))
         }
     }

@@ -3,10 +3,12 @@ use mongodb::{Collection};
 use mongodb::bson::{Document, doc};
 use tokio::time::Duration;
 use chrono::Utc;
+use log::{info, error, warn};
 use crate::utils::create_error;
 
 /// 同步状态记录结构
 #[derive(Debug, Clone)]
+#[allow(dead_code)]
 pub struct SyncStatus {
     pub last_synced_index: u64,
     pub last_synced_timestamp: u64,
@@ -71,14 +73,14 @@ pub async fn update_sync_status(
             mongodb::options::UpdateOptions::builder().upsert(true).build()
         ).await {
             Ok(_) => {
-                println!("同步状态已更新: 索引 {}, 时间戳 {}, 模式 {}", 
+                info!("同步状态已更新: 索引 {}, 时间戳 {}, 模式 {}", 
                          last_synced_index, last_synced_timestamp, sync_mode);
                 return Ok(());
             },
             Err(e) => {
                 retry_count += 1;
                 let wait_time = Duration::from_millis(500 * retry_count);
-                println!("更新同步状态失败 (尝试 {}/{}): {}，等待 {:?} 后重试",
+                warn!("更新同步状态失败 (尝试 {}/{}): {}，等待 {:?} 后重试",
                     retry_count, max_retries, e, wait_time);
                 tokio::time::sleep(wait_time).await;
             }
@@ -94,7 +96,7 @@ pub async fn set_incremental_mode(
     last_synced_index: u64,
     last_synced_timestamp: u64
 ) -> Result<(), Box<dyn Error>> {
-    println!("设置为增量同步模式，最新索引: {}", last_synced_index);
+    info!("设置为增量同步模式，最新索引: {}", last_synced_index);
     update_sync_status(sync_status_col, last_synced_index, last_synced_timestamp, "incremental").await
 }
 
@@ -102,7 +104,7 @@ pub async fn set_incremental_mode(
 pub async fn set_full_sync_mode(
     sync_status_col: &Collection<Document>
 ) -> Result<(), Box<dyn Error>> {
-    println!("设置为全量同步模式");
+    info!("设置为全量同步模式");
     update_sync_status(sync_status_col, 0, 0, "full").await
 }
 
@@ -112,11 +114,11 @@ pub async fn clear_sync_status(
 ) -> Result<(), Box<dyn Error>> {
     match sync_status_col.delete_many(doc! {}, None).await {
         Ok(result) => {
-            println!("已清除 {} 条同步状态记录", result.deleted_count);
+            info!("已清除 {} 条同步状态记录", result.deleted_count);
             Ok(())
         },
         Err(e) => {
-            println!("清除同步状态记录失败: {}", e);
+            error!("清除同步状态记录失败: {}", e);
             Err(create_error(&format!("清除同步状态记录失败: {}", e)))
         }
     }

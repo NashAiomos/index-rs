@@ -1,31 +1,31 @@
 use std::error::Error;
-use mongodb::{Collection, bson::doc};
-use mongodb::bson::Document;
+use mongodb::{Collection, bson::{doc, Document}};
 use tokio::time::Duration;
+use log::{info, error, warn, debug};
 use crate::models::Transaction;
 use crate::utils::create_error;
 
-/// 保存账户交易关系
+/// 保存账户与交易索引的关系
 pub async fn save_account_transaction(
     accounts_col: &Collection<Document>,
     account: &str,
     tx_index: u64,
 ) -> Result<(), Box<dyn Error>> {
     if account.trim().is_empty() {
-        println!("账户为空，跳过保存账户-交易关系");
+        debug!("账户为空，跳过保存账户-交易关系");
         return Ok(());
     }
     
-    // 设置重试逻辑
+    // 使用重试逻辑
     let max_retries = 3;
     let mut retry_count = 0;
     
     while retry_count < max_retries {
-        // 增量追加交易索引到账户集合
+        // 向账户文档中添加交易索引
         match accounts_col.update_one(
             doc! { "account": account },
             doc! { 
-                "$set": { "account": account },
+                "$set": { "account": account }, 
                 "$addToSet": { "transaction_indices": tx_index as i64 }
             },
             mongodb::options::UpdateOptions::builder().upsert(true).build()
@@ -34,26 +34,27 @@ pub async fn save_account_transaction(
             Err(e) => {
                 retry_count += 1;
                 let wait_time = Duration::from_millis(500 * retry_count);
-                println!("保存账户-交易关系失败 (尝试 {}/{}): {}，等待 {:?} 后重试",
-                    retry_count, max_retries, e, wait_time);
+                warn!("保存账户-交易关系失败 (账户: {}, 索引: {}) (尝试 {}/{}): {}，等待 {:?} 后重试",
+                    account, tx_index, retry_count, max_retries, e, wait_time);
                 tokio::time::sleep(wait_time).await;
             }
         }
     }
     
-    Err(create_error(&format!("保存账户-交易关系失败，已重试 {} 次", max_retries)))
+    Err(create_error(&format!("保存账户-交易关系失败 (账户: {}, 索引: {}), 已重试 {} 次", 
+        account, tx_index, max_retries)))
 }
 
-/// 清空账户-交易关系集合
+/// 清空账户集合
 pub async fn clear_accounts(accounts_col: &Collection<Document>) -> Result<u64, Box<dyn Error>> {
     match accounts_col.delete_many(doc! {}, None).await {
         Ok(result) => {
-            println!("已清除 {} 条账户-交易关系记录", result.deleted_count);
+            info!("已清除 {} 条账户记录", result.deleted_count);
             Ok(result.deleted_count)
         },
         Err(e) => {
-            println!("清除账户-交易关系集合失败: {}", e);
-            Err(create_error(&format!("清除账户-交易关系集合失败: {}", e)))
+            error!("清除账户集合失败: {}", e);
+            Err(create_error(&format!("清除账户集合失败: {}", e)))
         }
     }
 }
