@@ -24,16 +24,19 @@ use crate::db::sync_status::{get_sync_status, set_incremental_mode};
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn Error>> {
-    // 首先设置日志系统（在加载配置之前）
-    setup_default_logger();
+    // 读取配置文件（不使用日志记录）
+    let cfg = match load_config().await {
+        Ok(config) => config,
+        Err(e) => {
+            eprintln!("配置加载失败: {}", e);
+            return Err(e);
+        }
+    };
     
-    // 读取配置文件
-    let cfg = load_config().await?;
-    
-    // 用配置信息更新日志系统
+    // 初始化日志系统
     if let Err(e) = setup_logger(&cfg) {
         eprintln!("警告: 无法设置日志系统: {}", e);
-        // 继续执行，使用默认日志设置
+        // 继续执行，但日志会输出到标准错误
     }
     
     info!("正在启动区块链索引服务...");
@@ -50,29 +53,33 @@ async fn main() -> Result<(), Box<dyn Error>> {
     result
 }
 
-/// 设置默认日志系统
-fn setup_default_logger() {
-    let stdout = ConsoleAppender::builder()
-        .target(Target::Stdout)
-        .encoder(Box::new(PatternEncoder::new("[{d(%Y-%m-%d %H:%M:%S)}] [{l}] - {m}{n}")))
-        .build();
-    
-    if let Ok(config) = LogConfig::builder()
-        .appender(Appender::builder().build("stdout", Box::new(stdout)))
-        .build(Root::builder().appender("stdout").build(LevelFilter::Info)) {
-        
-        // 使用try_init防止多次初始化错误
-        let _ = log4rs::init_config(config);
-    }
-}
-
 /// 根据配置设置日志系统
 fn setup_logger(cfg: &models::Config) -> Result<(), Box<dyn Error>> {
     // 获取日志配置
     let log_cfg = match &cfg.log {
         Some(log_config) => log_config,
         None => {
-            // 没有日志配置，继续使用默认配置
+            // 没有日志配置，创建默认文件日志
+            eprintln!("未找到日志配置，使用默认配置");
+            // 确保日志目录存在
+            let log_dir = std::path::Path::new("logs");
+            if !log_dir.exists() {
+                fs::create_dir_all(log_dir)?;
+            }
+            
+            // 指定UTF-8编码
+            let encoder = PatternEncoder::new("[{d(%Y-%m-%d %H:%M:%S)}] [{l}] - {m}{n}");
+            
+            let file = FileAppender::builder()
+                .encoder(Box::new(encoder))
+                .build("logs/index-rs.log")?;
+                
+            let config = LogConfig::builder()
+                .appender(Appender::builder().build("file", Box::new(file)))
+                .build(Root::builder().appender("file").build(LevelFilter::Info))?;
+                
+            log4rs::init_config(config)?;
+            eprintln!("日志系统已初始化，使用默认配置");
             return Ok(());
         }
     };
@@ -94,13 +101,17 @@ fn setup_logger(cfg: &models::Config) -> Result<(), Box<dyn Error>> {
         "info" => LevelFilter::Info,
         "debug" => LevelFilter::Debug,
         "trace" => LevelFilter::Trace,
-        _ => LevelFilter::Warn,
+        _ => LevelFilter::Error, // 设置为Error级别，减少控制台输出
     };
     
-    // 创建控制台输出
+    // 创建编码器（指定UTF-8）
+    let pattern = "[{d(%Y-%m-%d %H:%M:%S)}] [{l}] - {m}{n}";
+    let encoder = PatternEncoder::new(pattern);
+    
+    // 创建控制台输出（如果需要）
     let stdout = ConsoleAppender::builder()
         .target(Target::Stdout)
-        .encoder(Box::new(PatternEncoder::new("[{d(%Y-%m-%d %H:%M:%S)}] [{l}] - {m}{n}")))
+        .encoder(Box::new(encoder.clone()))
         .build();
     
     // 确保日志目录存在
@@ -114,22 +125,13 @@ fn setup_logger(cfg: &models::Config) -> Result<(), Box<dyn Error>> {
     }
     
     // 构建日志配置
-    let mut config_builder = LogConfig::builder()
-        .appender(
-            Appender::builder()
-                .filter(Box::new(ThresholdFilter::new(console_level)))
-                .build("stdout", Box::new(stdout))
-        );
-    
+    let mut config_builder = LogConfig::builder();
     let mut root_builder = Root::builder();
-    
-    // 添加控制台日志
-    root_builder = root_builder.appender("stdout");
     
     // 如果启用了文件日志，添加文件输出
     if log_cfg.file_enabled {
         let file = FileAppender::builder()
-            .encoder(Box::new(PatternEncoder::new("[{d(%Y-%m-%d %H:%M:%S)}] [{l}] - {m}{n}")))
+            .encoder(Box::new(encoder.clone()))
             .build(&log_cfg.file)?;
         
         config_builder = config_builder.appender(
@@ -139,15 +141,39 @@ fn setup_logger(cfg: &models::Config) -> Result<(), Box<dyn Error>> {
         );
         
         root_builder = root_builder.appender("file");
+        
+        // 仅当控制台级别低于ERROR时才添加控制台输出
+        if console_level < LevelFilter::Error {
+            config_builder = config_builder.appender(
+                Appender::builder()
+                    .filter(Box::new(ThresholdFilter::new(console_level)))
+                    .build("stdout", Box::new(stdout))
+            );
+            
+            root_builder = root_builder.appender("stdout");
+        }
+    } else {
+        // 如果文件日志未启用，回退到控制台
+        config_builder = config_builder.appender(
+            Appender::builder()
+                .filter(Box::new(ThresholdFilter::new(log_level)))
+                .build("stdout", Box::new(stdout))
+        );
+        
+        root_builder = root_builder.appender("stdout");
     }
     
     // 应用日志配置
     let log_config = config_builder
         .build(root_builder.build(log_level))?;
     
-    // 使用handle_error确保失败时不会导致程序崩溃
-    if let Err(e) = log4rs::init_config(log_config) {
-        eprintln!("警告: 无法更新日志配置: {}", e);
+    // 初始化日志系统
+    log4rs::init_config(log_config)?;
+    
+    if log_cfg.file_enabled {
+        eprintln!("日志系统已初始化，日志文件：{}", log_cfg.file);
+    } else {
+        eprintln!("日志系统已初始化，使用控制台输出");
     }
     
     Ok(())
@@ -337,3 +363,4 @@ async fn run_application(cfg: models::Config) -> Result<(), Box<dyn Error>> {
         }
     }
 }
+

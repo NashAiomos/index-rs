@@ -232,4 +232,5 @@ pub async fn sync_ledger_transactions(
     
     info!("交易同步完成，当前索引: {}, 共同步 {} 笔新交易", current_index - 1, all_new_transactions.len());
     Ok(all_new_transactions)
-} 
+}
+

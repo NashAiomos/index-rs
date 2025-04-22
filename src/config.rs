@@ -9,14 +9,11 @@ use crate::utils::create_error;
 
 /// 加载应用配置
 pub async fn load_config() -> Result<AppConfig, Box<dyn Error>> {
-    // 注意：不在这里初始化日志系统，而在main.rs里统一处理
     let settings = match config_rs::Config::builder()
         .add_source(config_rs::File::with_name("config"))
         .build() {
         Ok(config) => config,
         Err(e) => {
-            // 在日志系统初始化前，使用标准错误输出
-            eprintln!("无法读取配置文件: {}", e);
             return Err(create_error(&format!("配置文件错误: {}", e)));
         }
     };
@@ -24,15 +21,10 @@ pub async fn load_config() -> Result<AppConfig, Box<dyn Error>> {
     let cfg: AppConfig = match settings.try_deserialize() {
         Ok(c) => c,
         Err(e) => {
-            eprintln!("无法解析配置: {}", e);
             return Err(create_error(&format!("配置解析错误: {}", e)));
         }
     };
 
-    // 在这个阶段日志系统可能尚未初始化完成，先不使用日志输出
-    eprintln!("配置加载完成: MongoDB={}, 数据库={}, Ledger Canister={}",
-        cfg.mongodb_url, cfg.database, cfg.ledger_canister_id);
-    
     Ok(cfg)
 }
 
@@ -121,4 +113,4 @@ pub fn parse_canister_id(canister_id_text: &str) -> Result<Principal, Box<dyn Er
             Err(create_error(&format!("无效的Canister ID: {}", e)))
         }
     }
-} 
+}

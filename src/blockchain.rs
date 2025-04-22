@@ -3,6 +3,7 @@ use ic_agent::Agent;
 use ic_agent::export::Principal;
 use candid::{Encode, Decode};
 use num_traits::ToPrimitive;
+use log::{info, error, warn, debug};
 use crate::models::{
     ArchivesResult, ArchiveInfo, GetTransactionsArg, Transaction, 
     LedgerGetTransactionsResult, SimpleTransactionRange,
@@ -16,6 +17,8 @@ pub async fn fetch_archives(
     agent: &Agent,
     canister_id: &Principal,
 ) -> Result<Vec<ArchiveInfo>, Box<dyn Error>> {
+    info!("获取归档信息...");
+    
     let empty_tuple = ();
     let arg_bytes = Encode!(&empty_tuple)?;
     let response = agent.query(canister_id, "archives")
@@ -24,6 +27,14 @@ pub async fn fetch_archives(
         .await?;
     
     let archives_result: ArchivesResult = Decode!(&response, ArchivesResult)?;
+    
+    // 输出精简信息
+    if !archives_result.0.is_empty() {
+        info!("发现 {} 个归档 canister，将依次同步", archives_result.0.len());
+    } else {
+        info!("未发现任何归档 canister");
+    }
+    
     Ok(archives_result.0)
 }
 
@@ -34,10 +45,10 @@ pub async fn fetch_archive_transactions(
     start: u64,
     length: u64,
 ) -> Result<Vec<Transaction>, Box<dyn Error>> {
-    println!("从归档canister获取交易: start={}, length={}", start, length);
+    debug!("从归档canister获取交易: start={}, length={}", start, length);
     
     if length == 0 {
-        println!("请求长度为0，返回空交易列表");
+        debug!("请求长度为0，返回空交易列表");
         return Ok(Vec::new());
     }
     
@@ -49,12 +60,12 @@ pub async fn fetch_archive_transactions(
     let arg_bytes = match Encode!(&arg) {
         Ok(bytes) => bytes,
         Err(e) => {
-            println!("编码参数失败: {}", e);
+            error!("编码参数失败: {}", e);
             return Err(create_error(&format!("参数编码失败: {}", e)));
         }
     };
     
-    println!("调用归档canister: {}", archive_canister_id);
+    debug!("调用归档canister: {}", archive_canister_id);
     
     // 添加重试逻辑
     let max_retries = 3;
@@ -67,14 +78,19 @@ pub async fn fetch_archive_transactions(
             .call()
             .await {
             Ok(response) => {
-                println!("收到归档canister响应，长度: {} 字节", response.len());
+                debug!("收到归档canister响应，长度: {} 字节", response.len());
                 
                 // 尝试多种可能的结构解码方式
                 
                 // 1. 首先尝试解码为SimpleTransactionRange（调整顺序，优先尝试）
-                println!("尝试解码为SimpleTransactionRange...");
+                debug!("尝试解码为SimpleTransactionRange...");
                 if let Ok(range) = Decode!(&response, SimpleTransactionRange) {
-                    println!("成功解码为SimpleTransactionRange，交易数量: {}", range.transactions.len());
+                    let tx_count = range.transactions.len();
+                    debug!("成功解码为SimpleTransactionRange，交易数量: {}", tx_count);
+                    
+                    // 输出精简信息到命令行
+                    let end = start + tx_count as u64 - 1;
+                    info!("成功获取到归档交易批次：{}-{}，使用SimpleTransactionRange解码，已保存到数据库", start, end);
                     
                     // 给交易添加索引信息
                     let mut indexed_transactions = Vec::new();
@@ -88,9 +104,14 @@ pub async fn fetch_archive_transactions(
                 }
                 
                 // 2. 尝试解码为TransactionList(Vec<Transaction>)
-                println!("尝试解码为TransactionList...");
+                debug!("尝试解码为TransactionList...");
                 if let Ok(list) = Decode!(&response, TransactionList) {
-                    println!("成功解码为TransactionList，交易数量: {}", list.0.len());
+                    let tx_count = list.0.len();
+                    debug!("成功解码为TransactionList，交易数量: {}", tx_count);
+                    
+                    // 输出精简信息到命令行
+                    let end = start + tx_count as u64 - 1;
+                    info!("成功获取到归档交易批次：{}-{}，使用TransactionList解码，已保存到数据库", start, end);
                     
                     // 给交易添加索引信息
                     let mut indexed_transactions = Vec::new();
@@ -104,9 +125,14 @@ pub async fn fetch_archive_transactions(
                 }
                 
                 // 3. 尝试直接解码为Vec<Transaction>
-                println!("尝试解码为Vec<Transaction>...");
+                debug!("尝试解码为Vec<Transaction>...");
                 if let Ok(transactions) = Decode!(&response, Vec<Transaction>) {
-                    println!("成功解码为Vec<Transaction>，交易数量: {}", transactions.len());
+                    let tx_count = transactions.len();
+                    debug!("成功解码为Vec<Transaction>，交易数量: {}", tx_count);
+                    
+                    // 输出精简信息到命令行
+                    let end = start + tx_count as u64 - 1;
+                    info!("成功获取到归档交易批次：{}-{}，使用Vec<Transaction>解码，已保存到数据库", start, end);
                     
                     // 给交易添加索引信息
                     let mut indexed_transactions = Vec::new();
@@ -120,14 +146,16 @@ pub async fn fetch_archive_transactions(
                 }
                 
                 // 所有解码方法都失败，但API调用成功了，重试可能没用
-                println!("所有解码方法都失败，返回空交易列表");
+                debug!("所有解码方法都失败，返回空交易列表");
+                error!("解码错误：归档交易批次 {}-{} 所有解码方式均失败，API调用成功但无法解析响应数据，已跳过此批次", 
+                      start, start + length - 1);
                 return Ok(Vec::new());
             },
             Err(e) => {
                 retry_count += 1;
                 last_error = Some(e);
                 let wait_time = Duration::from_secs(2 * retry_count); // 指数退避
-                println!("调用归档canister失败 (尝试 {}/{}): {}，等待 {:?} 后重试", 
+                warn!("网络错误：调用归档canister失败 (尝试 {}/{}): {}，等待 {:?} 后重试", 
                     retry_count, max_retries, last_error.as_ref().unwrap(), wait_time);
                 tokio::time::sleep(wait_time).await;
             }
@@ -135,7 +163,8 @@ pub async fn fetch_archive_transactions(
     }
     
     // 如果达到最大重试次数仍然失败
-    println!("达到最大重试次数 ({}), 调用归档canister失败", max_retries);
+    error!("网络错误：达到最大重试次数 ({}), 调用归档canister {} 失败，无法获取交易批次 {}-{}", 
+          max_retries, archive_canister_id, start, start + length - 1);
     Err(create_error(&format!("调用归档canister失败，已重试 {} 次: {}", 
             max_retries, last_error.unwrap())))
 }
@@ -147,11 +176,11 @@ pub async fn fetch_ledger_transactions(
     start: u64,
     length: u64,
 ) -> Result<(Vec<Transaction>, u64, u64), Box<dyn Error>> {
-    println!("查询ledger交易: start={}, length={}", start, length);
+    debug!("查询ledger交易: start={}, length={}", start, length);
     
     // 验证参数
     if length == 0 {
-        println!("请求长度为0，返回空交易列表");
+        debug!("请求长度为0，返回空交易列表");
         return Ok((Vec::new(), start, start));
     }
     
@@ -163,7 +192,7 @@ pub async fn fetch_ledger_transactions(
     let arg_bytes = match Encode!(&arg) {
         Ok(bytes) => bytes,
         Err(e) => {
-            println!("编码参数失败: {}", e);
+            error!("编码参数失败: {}", e);
             return Err(create_error(&format!("ledger参数编码失败: {}", e)));
         }
     };
@@ -179,13 +208,13 @@ pub async fn fetch_ledger_transactions(
             .call()
             .await {
             Ok(response) => {
-                println!("收到ledger响应，长度: {} 字节", response.len());
+                debug!("收到ledger响应，长度: {} 字节", response.len());
                 
                 // 尝试使用LedgerGetTransactionsResult解析
                 match Decode!(&response, LedgerGetTransactionsResult) {
                     Ok(result) => {
-                        println!("成功解码为LedgerGetTransactionsResult");
-                        println!("first_index: {}, log_length: {}, 交易数: {}, 归档交易数: {}", 
+                        debug!("成功解码为LedgerGetTransactionsResult");
+                        debug!("first_index: {}, log_length: {}, 交易数: {}, 归档交易数: {}", 
                             result.first_index.0, 
                             result.log_length.0,
                             result.transactions.len(),
@@ -193,6 +222,15 @@ pub async fn fetch_ledger_transactions(
                         
                         let first_index = result.first_index.0.to_u64().unwrap_or(0);
                         let log_length = result.log_length.0.to_u64().unwrap_or(0);
+                        let tx_count = result.transactions.len();
+                        
+                        // 输出精简信息到命令行
+                        if tx_count > 0 {
+                            let end = first_index + tx_count as u64 - 1;
+                            info!("成功获取到主账本交易批次：{}-{}，使用LedgerGetTransactionsResult解码，已保存到数据库", first_index, end);
+                        } else {
+                            debug!("主账本未返回任何交易");
+                        }
                         
                         // 给交易添加索引信息
                         let mut transactions = Vec::new();
@@ -205,17 +243,37 @@ pub async fn fetch_ledger_transactions(
                         return Ok((transactions, first_index, log_length));
                     },
                     Err(e) => {
-                        println!("解析ledger响应失败，尝试备用解码方法: {}", e);
+                        debug!("解析ledger响应失败，尝试备用解码方法: {}", e);
                         
                         // 尝试使用SimpleTransactionRange解析
-                        if let Ok(_range) = Decode!(&response, SimpleTransactionRange) {
-                            println!("使用SimpleTransactionRange成功解析");
-                            // 由于SimpleTransactionRange没有first_index信息，假设为0
+                        if let Ok(range) = Decode!(&response, SimpleTransactionRange) {
+                            debug!("使用SimpleTransactionRange成功解析");
+                            let tx_count = range.transactions.len();
+                            
+                            // 输出精简信息到命令行
+                            if tx_count > 0 {
+                                let end = start + tx_count as u64 - 1;
+                                info!("成功获取到主账本交易批次：{}-{}，使用SimpleTransactionRange解码，已保存到数据库", start, end);
+                                
+                                // 给交易添加索引信息
+                                let mut transactions = Vec::new();
+                                for (i, mut tx) in range.transactions.into_iter().enumerate() {
+                                    let index = start + i as u64;
+                                    tx.index = Some(index);
+                                    transactions.push(tx);
+                                }
+                                
+                                return Ok((transactions, start, start + tx_count as u64));
+                            }
+                            
+                            // 由于SimpleTransactionRange没有first_index信息，假设为start
                             return Ok((Vec::new(), start, start));
                         }
                         
                         // 如果两种解码方法都失败，但API调用成功，返回空结果
-                        println!("所有解码方法都失败，返回空交易列表");
+                        debug!("所有解码方法都失败，返回空交易列表");
+                        error!("解码错误：主账本交易批次 {}-{} 所有解码方式均失败，API调用成功但无法解析响应数据，已跳过此批次", 
+                              start, start + length - 1);
                         return Ok((Vec::new(), start, start));
                     }
                 }
@@ -224,7 +282,7 @@ pub async fn fetch_ledger_transactions(
                 retry_count += 1;
                 last_error = Some(e);
                 let wait_time = Duration::from_secs(2 * retry_count); // 指数退避
-                println!("调用ledger canister失败 (尝试 {}/{}): {}，等待 {:?} 后重试", 
+                warn!("网络错误：调用主账本canister失败 (尝试 {}/{}): {}，等待 {:?} 后重试", 
                     retry_count, max_retries, last_error.as_ref().unwrap(), wait_time);
                 tokio::time::sleep(wait_time).await;
             }
@@ -232,7 +290,8 @@ pub async fn fetch_ledger_transactions(
     }
     
     // 如果达到最大重试次数仍然失败
-    println!("达到最大重试次数 ({}), 调用ledger canister失败", max_retries);
+    error!("网络错误：达到最大重试次数 ({}), 调用主账本canister失败，无法获取交易批次 {}-{}", 
+          max_retries, start, start + length - 1);
     Err(create_error(&format!("调用ledger canister失败，已重试 {} 次: {}", 
             max_retries, last_error.unwrap())))
 }
@@ -242,7 +301,7 @@ pub async fn get_first_transaction_index(
     agent: &Agent,
     canister_id: &Principal,
 ) -> Result<u64, Box<dyn Error>> {
-    println!("尝试获取区块链上的第一个交易索引...");
+    debug!("尝试获取区块链上的第一个交易索引...");
     
     // 查询第一个交易，主要目的是获取first_index
     let arg = GetTransactionsArg {
@@ -253,7 +312,7 @@ pub async fn get_first_transaction_index(
     let arg_bytes = match Encode!(&arg) {
         Ok(bytes) => bytes,
         Err(e) => {
-            println!("编码参数失败: {}", e);
+            error!("编码参数失败: {}", e);
             return Err(create_error(&format!("参数编码失败: {}", e)));
         }
     };
@@ -273,15 +332,16 @@ pub async fn get_first_transaction_index(
                 match Decode!(&response, LedgerGetTransactionsResult) {
                     Ok(result) => {
                         let first_index = result.first_index.0.to_u64().unwrap_or(0);
-                        println!("成功获取区块链初始索引: {}", first_index);
+                        info!("获取到区块链初始索引: {}", first_index);
                         return Ok(first_index);
                     },
                     Err(e) => {
-                        println!("解析ledger响应失败: {}", e);
+                        debug!("解析ledger响应失败: {}", e);
                         
                         // 尝试使用SimpleTransactionRange解析
                         if let Ok(_range) = Decode!(&response, SimpleTransactionRange) {
-                            println!("使用SimpleTransactionRange成功解析");
+                            debug!("使用SimpleTransactionRange成功解析");
+                            info!("区块链初始索引默认为0");
                             // 由于SimpleTransactionRange没有first_index信息，假设为0
                             return Ok(0);
                         }
@@ -297,12 +357,14 @@ pub async fn get_first_transaction_index(
                 let error_msg = format!("调用canister失败: {}", e);
                 last_error = Some(error_msg.clone());
                 let wait_time = Duration::from_secs(2 * retry_count); // 指数退避
-                println!("调用canister失败 (尝试 {}/{}): {}，等待 {:?} 后重试", 
+                warn!("调用canister失败 (尝试 {}/{}): {}，等待 {:?} 后重试", 
                     retry_count, max_retries, error_msg, wait_time);
                 tokio::time::sleep(wait_time).await;
             }
         }
     }
     
+    warn!("无法获取区块链初始索引，将使用默认值0");
     Err(create_error(&last_error.unwrap_or_else(|| "尝试获取区块链初始索引失败，达到最大重试次数".to_string())))
-} 
+}
+

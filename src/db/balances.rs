@@ -102,16 +102,12 @@ pub async fn calculate_all_balances(
             continue;
         }
         
-        info!("正在计算账户 {} 的余额，共有 {} 笔交易", account, tx_indices.len());
-        
         // 计算该账户的余额
         match calculate_account_balance(&account, &tx_indices, tx_col, token_decimals).await {
             Ok(balance) => {
                 // 更新余额记录
                 match save_account_balance(balances_col, &account, &balance).await {
                     Ok(_) => {
-                        info!("账户 {} 余额计算完成: {} ({} 代币)", 
-                                account, balance.0, format_token_amount(&balance, token_decimals));
                         success_count += 1;
                     },
                     Err(e) => {
@@ -193,7 +189,7 @@ pub async fn calculate_incremental_balances(
         }
     }
     
-    info!("找到 {} 个受影响的账户需要更新余额", affected_accounts.len());
+    debug!("找到 {} 个受影响的账户需要更新余额", affected_accounts.len());
     
     let mut success_count = 0u64;
     let mut error_count = 0u64;
@@ -233,16 +229,12 @@ pub async fn calculate_incremental_balances(
             continue;
         }
         
-        info!("正在重新计算账户 {} 的余额，共有 {} 笔交易", account, tx_indices.len());
-        
         // 计算该账户的余额
         match calculate_account_balance(&account, &tx_indices, tx_col, token_decimals).await {
             Ok(balance) => {
                 // 更新余额记录
                 match save_account_balance(balances_col, &account, &balance).await {
                     Ok(_) => {
-                        info!("账户 {} 余额更新完成: {} ({} 代币)", 
-                                account, balance.0, format_token_amount(&balance, token_decimals));
                         success_count += 1;
                     },
                     Err(e) => {
@@ -267,7 +259,7 @@ async fn calculate_account_balance(
     account: &str,
     tx_indices: &[i64],
     tx_col: &Collection<Document>,
-    _token_decimals: u8,
+    token_decimals: u8,
 ) -> Result<Nat, Box<dyn Error>> {
     // 规范化账户ID
     let normalized_account = normalize_account_id(account);
@@ -284,9 +276,6 @@ async fn calculate_account_balance(
         .build();
     
     let mut tx_cursor = tx_col.find(filter, options).await?;
-    
-    // 输出开始处理的信息，使用规范化账户
-    info!("正在计算账户 {} 的余额，共有 {} 笔交易", normalized_account, tx_indices.len());
     
     // 遍历处理每一笔交易
     while tx_cursor.advance().await? {
@@ -461,7 +450,9 @@ async fn calculate_account_balance(
         processed_count += 1;
     }
     
-    info!("账户 {} 处理了 {} 笔交易，最终余额: {}", normalized_account, processed_count, balance.0);
+    // 使用更精简的日志格式
+    debug!("已完成 {} 余额计算，共 {} 笔交易，余额：{} ({} 代币)", 
+           normalized_account, processed_count, balance.0, format_token_amount(&balance, token_decimals));
     Ok(balance)
 }
 

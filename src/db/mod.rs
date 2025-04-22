@@ -105,4 +105,5 @@ pub async fn create_indexes(conn: &DbConnection) -> Result<(), Box<dyn Error>> {
     }
     
     Ok(())
-} 
+}
+
