@@ -40,6 +40,9 @@ impl fmt::Display for Account {
             Some(sub) => {
                 if sub.is_empty() {
                     "".to_string()
+                } else if sub.iter().all(|&b| b == 0) {
+                    // 如果子账户是全0，则视为默认子账户，不显示
+                    "".to_string()
                 } else {
                     format!("0x{}", hex::encode(sub))
                 }

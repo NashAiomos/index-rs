@@ -13,8 +13,11 @@ pub async fn get_account_balance(
     balances_col: &Collection<Document>,
     account: &str,
 ) -> Result<String, Box<dyn Error>> {
+    // 规范化账户格式
+    let normalized_account = normalize_account_id(account);
+    
     if let Some(doc) = balances_col
-        .find_one(doc! { "account": account }, None)
+        .find_one(doc! { "account": &normalized_account }, None)
         .await?
     {
         if let Ok(balance) = doc.get_str("balance") {
@@ -152,6 +155,10 @@ pub async fn calculate_incremental_balances(
                 if let Some(ref transfer) = tx.transfer {
                     affected_accounts.insert(transfer.from.to_string());
                     affected_accounts.insert(transfer.to.to_string());
+                    // 处理transferFrom的代理地址
+                    if let Some(ref spender) = transfer.spender {
+                        affected_accounts.insert(spender.to_string());
+                    }
                 }
             },
             "mint" => {
@@ -162,14 +169,28 @@ pub async fn calculate_incremental_balances(
             "burn" => {
                 if let Some(ref burn) = tx.burn {
                     affected_accounts.insert(burn.from.to_string());
+                    // 处理授权销毁的代理地址
+                    if let Some(ref spender) = burn.spender {
+                        affected_accounts.insert(spender.to_string());
+                    }
                 }
             },
             "approve" => {
                 if let Some(ref approve) = tx.approve {
                     affected_accounts.insert(approve.from.to_string());
+                    affected_accounts.insert(approve.spender.to_string());
                 }
             },
-            _ => {}
+            "notify" => {
+                // ICRC-3通知事件处理
+                // 对于通知事件，同样需要找出相关账户
+                // 这里需要根据通知的具体内容确定，通常通知发送方和接收方都需要处理
+                // 此处代码需要根据实际的ICRC-3实现来完善
+                println!("检测到通知事件，但ICRC-3实现尚未完成");
+            },
+            _ => {
+                println!("未知交易类型: {}, 跳过账户提取", tx.kind);
+            }
         }
     }
     
@@ -249,6 +270,8 @@ async fn calculate_account_balance(
     tx_col: &Collection<Document>,
     _token_decimals: u8,
 ) -> Result<Nat, Box<dyn Error>> {
+    // 规范化账户ID
+    let normalized_account = normalize_account_id(account);
     let mut balance = Nat::from(0u64);
     let mut processed_count = 0u64;
     
@@ -263,20 +286,69 @@ async fn calculate_account_balance(
     
     let mut tx_cursor = tx_col.find(filter, options).await?;
     
+    // 输出开始处理的信息，使用规范化账户
+    println!("正在计算账户 {} 的余额，共有 {} 笔交易", normalized_account, tx_indices.len());
+    
     // 遍历处理每一笔交易
     while tx_cursor.advance().await? {
         let raw_doc = tx_cursor.current();
         // 转换为Document类型
         let tx_doc = Document::try_from(raw_doc.to_owned())?;
         
-        // 反序列化为交易对象
-        let tx: Transaction = match mongodb::bson::from_document(tx_doc) {
+        // 反序列化为交易对象 - 使用克隆避免所有权移动
+        let tx: Transaction = match mongodb::bson::from_document(tx_doc.clone()) {
             Ok(transaction) => transaction,
             Err(e) => {
                 println!("反序列化交易失败: {}", e);
                 continue;
             }
         };
+        
+        // 检查交易状态 - 如果存在status字段且不是"COMPLETED"或"SUCCESS"，则跳过
+        if let Some(status) = tx_doc.get_str("status").ok() {
+            if status != "COMPLETED" && status != "SUCCESS" {
+                let index = tx.index.unwrap_or(0);
+                println!("跳过未完成的交易 [索引:{}] [状态:{}]", index, status);
+                
+                // 记录交易类型以便更好地分析
+                match tx.kind.as_str() {
+                    "transfer" => {
+                        if let Some(ref transfer) = tx.transfer {
+                            println!("  - 跳过的转账交易: {} -> {} [金额:{}]",
+                                transfer.from, transfer.to, transfer.amount.0);
+                        }
+                    },
+                    "mint" => {
+                        if let Some(ref mint) = tx.mint {
+                            println!("  - 跳过的铸币交易: 接收方:{} [金额:{}]",
+                                mint.to, mint.amount.0);
+                        }
+                    },
+                    "burn" => {
+                        if let Some(ref burn) = tx.burn {
+                            println!("  - 跳过的销毁交易: 发送方:{} [金额:{}]",
+                                burn.from, burn.amount.0);
+                        }
+                    },
+                    "approve" => {
+                        if let Some(ref approve) = tx.approve {
+                            println!("  - 跳过的授权交易: {} 授权给 {} [金额:{}]",
+                                approve.from, approve.spender, approve.amount.0);
+                        }
+                    },
+                    _ => {
+                        println!("  - 跳过的未知类型交易: {}", tx.kind);
+                    }
+                }
+                continue;
+            }
+        }
+        
+        // 检查账户格式是否包含子账户
+        let account_parts: Vec<&str> = normalized_account.split(':').collect();
+        // 添加前导下划线避免未使用变量警告
+        let _principal_id = account_parts[0];
+        let _subaccount_hex = if account_parts.len() > 1 { Some(account_parts[1]) } else { None };
         
         // 根据交易类型和账户角色计算余额变化
         match tx.kind.as_str() {
@@ -285,34 +357,45 @@ async fn calculate_account_balance(
                     let from_account = transfer.from.to_string();
                     let to_account = transfer.to.to_string();
                     
+                    // 验证账户匹配，考虑子账户
+                    let is_from = account_match(&from_account, &normalized_account);
+                    let is_to = account_match(&to_account, &normalized_account);
+                    
+                    // 检查是否是transferFrom操作 (当spender字段存在时)
+                    let is_spender = if let Some(ref spender) = transfer.spender {
+                        account_match(&spender.to_string(), &normalized_account)
+                    } else {
+                        false
+                    };
+                    
                     // 如果是发送方，减少余额
-                    if from_account == account {
-                        // 减去转账金额
-                        if balance >= transfer.amount {
-                            balance = balance - transfer.amount.clone();
-                        } else {
-                            println!("警告: 账户 {} 的余额不足，当前余额: {}, 转账金额: {}", 
-                                    account, balance.0, transfer.amount.0);
-                            balance = Nat::from(0u64);
-                        }
+                    if is_from {
+                        // 先创建错误消息，避免借用冲突
+                        let error_msg = format!("账户 {} 的余额不足，当前余额: {}, 转账金额: {}", 
+                                              normalized_account, balance.0, transfer.amount.0);
+                        // 安全扣减余额，确保不会变成负数
+                        safe_subtract_balance(&mut balance, &transfer.amount, &error_msg);
                         
                         // 减去手续费
                         if let Some(ref fee) = transfer.fee {
                             if !fee.0.is_zero() {
-                                if balance >= *fee {
-                                    balance = balance - fee.clone();
-                                } else {
-                                    println!("警告: 账户 {} 的余额不足以支付手续费，当前余额: {}, 手续费: {}", 
-                                            account, balance.0, fee.0);
-                                    balance = Nat::from(0u64);
-                                }
+                                let fee_error_msg = format!("账户 {} 的余额不足以支付手续费，当前余额: {}, 手续费: {}", 
+                                                         normalized_account, balance.0, fee.0);
+                                safe_subtract_balance(&mut balance, fee, &fee_error_msg);
                             }
                         }
                     }
                     
                     // 如果是接收方，增加余额
-                    if to_account == account {
+                    if is_to {
                         balance = balance + transfer.amount.clone();
+                    }
+                    
+                    // 如果是spender (转账授权代理)，则不直接影响余额
+                    // 但可以记录此操作，以便跟踪授权使用情况
+                    if is_spender {
+                        println!("账户 {} 作为授权代理执行了从 {} 到 {} 的转账，金额: {}", 
+                                normalized_account, from_account, to_account, transfer.amount.0);
                     }
                 }
             },
@@ -321,7 +404,7 @@ async fn calculate_account_balance(
                     let to_account = mint.to.to_string();
                     
                     // 如果是接收方，增加余额
-                    if to_account == account {
+                    if account_match(&to_account, &normalized_account) {
                         balance = balance + mint.amount.clone();
                     }
                 }
@@ -330,15 +413,24 @@ async fn calculate_account_balance(
                 if let Some(ref burn) = tx.burn {
                     let from_account = burn.from.to_string();
                     
+                    // 检查是否是授权销毁
+                    let is_spender = if let Some(ref spender) = burn.spender {
+                        account_match(&spender.to_string(), &normalized_account)
+                    } else {
+                        false
+                    };
+                    
                     // 如果是发送方，减少余额
-                    if from_account == account {
-                        if balance >= burn.amount {
-                            balance = balance - burn.amount.clone();
-                        } else {
-                            println!("警告: 账户 {} 的余额不足，当前余额: {}, 销毁金额: {}", 
-                                    account, balance.0, burn.amount.0);
-                            balance = Nat::from(0u64);
-                        }
+                    if account_match(&from_account, &normalized_account) {
+                        let error_msg = format!("账户 {} 的余额不足，当前余额: {}, 销毁金额: {}", 
+                                              normalized_account, balance.0, burn.amount.0);
+                        safe_subtract_balance(&mut balance, &burn.amount, &error_msg);
+                    }
+                    
+                    // 记录spender操作
+                    if is_spender {
+                        println!("账户 {} 作为授权代理执行了从 {} 销毁代币的操作，金额: {}", 
+                                normalized_account, from_account, burn.amount.0);
                     }
                 }
             },
@@ -348,31 +440,87 @@ async fn calculate_account_balance(
                 if let Some(ref approve) = tx.approve {
                     let from_account = approve.from.to_string();
                     
-                    if from_account == account {
+                    if account_match(&from_account, &normalized_account) {
                         if let Some(ref fee) = approve.fee {
                             if !fee.0.is_zero() {
-                                if balance >= *fee {
-                                    balance = balance - fee.clone();
-                                } else {
-                                    println!("警告: 账户 {} 的余额不足以支付授权手续费，当前余额: {}, 手续费: {}", 
-                                            account, balance.0, fee.0);
-                                    balance = Nat::from(0u64);
-                                }
+                                let fee_error_msg = format!("账户 {} 的余额不足以支付授权手续费，当前余额: {}, 手续费: {}", 
+                                                         normalized_account, balance.0, fee.0);
+                                safe_subtract_balance(&mut balance, fee, &fee_error_msg);
                             }
                         }
                     }
                 }
             },
+            "notify" => {
+                // 处理ICRC-3标准的通知事件
+                // ICRC-3通知通常不影响余额，但可能包含重要信息
+                println!("处理通知事件 (索引:{}), 目前通知事件不影响余额", tx.index.unwrap_or(0));
+                // 这里需要根据具体的ICRC-3实现来处理
+            },
             _ => {
-                println!("未知交易类型: {}, 跳过余额计算", tx.kind);
+                println!("未知交易类型: {}, 跳过余额计算 (索引:{})", tx.kind, tx.index.unwrap_or(0));
             }
         }
         
         processed_count += 1;
     }
     
-    println!("账户 {} 处理了 {} 笔交易，最终余额: {}", account, processed_count, balance.0);
+    println!("账户 {} 处理了 {} 笔交易，最终余额: {}", normalized_account, processed_count, balance.0);
     Ok(balance)
+}
+
+/// 安全减少余额，确保不会变成负数
+fn safe_subtract_balance(balance: &mut Nat, amount: &Nat, warning_msg: &str) {
+    if *balance >= *amount {
+        *balance = balance.clone() - amount.clone();
+    } else {
+        println!("警告: {}", warning_msg);
+        *balance = Nat::from(0u64);
+    }
+}
+
+/// 检查两个账户是否匹配，考虑子账户
+fn account_match(account1: &str, account2: &str) -> bool {
+    if account1 == account2 {
+        return true;
+    }
+    
+    // 拆分账户字符串，检查principal和子账户
+    let parts1: Vec<&str> = account1.split(':').collect();
+    let parts2: Vec<&str> = account2.split(':').collect();
+    
+    // 检查principal是否一致
+    if parts1[0] != parts2[0] {
+        return false;
+    }
+    
+    // 检查子账户是否匹配
+    let sub1 = if parts1.len() > 1 { Some(parts1[1]) } else { None };
+    let sub2 = if parts2.len() > 1 { Some(parts2[1]) } else { None };
+    
+    match (sub1, sub2) {
+        // 两者都没有子账户
+        (None, None) => true,
+        
+        // 一方有子账户，另一方没有子账户
+        (Some(s), None) => is_default_subaccount(s),
+        (None, Some(s)) => is_default_subaccount(s),
+        
+        // 两方都有子账户，直接比较
+        (Some(s1), Some(s2)) => s1 == s2 || (is_default_subaccount(s1) && is_default_subaccount(s2)),
+    }
+}
+
+/// 检查子账户是否为默认子账户（全0）
+fn is_default_subaccount(subaccount: &str) -> bool {
+    // 去掉"0x"前缀，检查剩余部分是否全为0
+    let subaccount = subaccount.trim_start_matches("0x");
+    // 子账户标准长度为32字节(64个十六进制字符)
+    if subaccount.len() != 64 {
+        return false;
+    }
+    
+    subaccount.chars().all(|c| c == '0')
 }
 
 /// 保存账户余额到数据库
@@ -381,6 +529,9 @@ async fn save_account_balance(
     account: &str,
     balance: &Nat,
 ) -> Result<(), Box<dyn Error>> {
+    // 规范化账户格式
+    let normalized_account = normalize_account_id(account);
+    
     // 设置重试逻辑
     let max_retries = 3;
     let mut retry_count = 0;
@@ -388,17 +539,23 @@ async fn save_account_balance(
     while retry_count < max_retries {
         // 更新余额
         match balances_col.update_one(
-            doc! { "account": account },
+            doc! { "account": &normalized_account },
             doc! {
                 "$set": {
-                    "account": account,
+                    "account": &normalized_account,
                     "balance": balance.0.to_string(),
                     "last_updated": (chrono::Utc::now().timestamp() as i64),
                 }
             },
             mongodb::options::UpdateOptions::builder().upsert(true).build()
         ).await {
-            Ok(_) => return Ok(()),
+            Ok(_) => {
+                // 如果账户被规范化了，记录一下
+                if normalized_account != account {
+                    println!("账户 {} 已规范化为 {}", account, normalized_account);
+                }
+                return Ok(());
+            },
             Err(e) => {
                 retry_count += 1;
                 let wait_time = Duration::from_millis(500 * retry_count);
@@ -409,6 +566,26 @@ async fn save_account_balance(
         }
     }
     
-    Err(create_error(&format!("更新账户 {} 余额失败，已重试 {} 次", account, max_retries)))
+    Err(create_error(&format!("更新账户 {} 余额失败，已重试 {} 次", normalized_account, max_retries)))
+}
+
+/// 规范化账户ID，去除全0子账户
+fn normalize_account_id(account: &str) -> String {
+    // 拆分账户字符串，检查principal和子账户
+    let parts: Vec<&str> = account.split(':').collect();
+    
+    // 如果没有子账户部分，直接返回
+    if parts.len() <= 1 {
+        return account.to_string();
+    }
+    
+    // 检查子账户是否为默认子账户（全0）
+    if is_default_subaccount(parts[1]) {
+        // 只返回principal部分
+        return parts[0].to_string();
+    }
+    
+    // 其他情况，保持原样
+    account.to_string()
 }
 
