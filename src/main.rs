@@ -4,6 +4,8 @@ mod config;
 mod blockchain;
 mod db;
 mod sync;
+mod api;
+mod api_server;
 
 use std::error::Error;
 use std::fs;
@@ -352,6 +354,30 @@ async fn run_application(cfg: models::Config) -> Result<(), Box<dyn Error>> {
         }
         
         info!("跳过初始同步，直接进入增量同步模式");
+    }
+    
+    // 启动API服务器（如果配置中启用）
+    if let Some(api_config) = &cfg.api_server {
+        if api_config.enabled {
+            info!("配置中启用了API服务器，即将启动...");
+            // 克隆数据库连接和端口到新的变量，避免借用 cfg
+            let db_conn_clone = db_conn.clone();
+            let port = api_config.port;
+
+            // 创建异步任务启动API服务器
+            tokio::spawn(async move {
+                let api_server = api_server::ApiServer::new(db_conn_clone, token_decimals);
+                if let Err(e) = api_server.start(port).await {
+                    log::error!("API服务器启动失败: {}", e);
+                }
+            });
+
+            info!("API服务器已在后台启动，端口: {}", port);
+        } else {
+            info!("API服务器在配置中被禁用，不会启动API服务");
+        }
+    } else {
+        info!("未找到API服务器配置，不会启动API服务");
     }
     
     // 定时增量同步

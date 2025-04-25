@@ -2,6 +2,7 @@ mongodb_url = "mongodb://localhost:27017"
 database = "ledger"
 ic_url = "https://icp0.io"
 ledger_canister_id = "anbw7-hqaaa-aaaaj-az7ra-cai"
+token_decimals = 6
 
 # 日志配置
 [log]
@@ -10,10 +11,19 @@ level = "info"
 # 日志文件路径
 file = "logs/index-rs.log"
 # 控制台日志级别 (可选，默认为warn)
-console_level = "warn"
+console_level = "info"
 # 是否启用文件日志
 file_enabled = true
 # 日志文件最大大小(MB)
 max_size = 10
 # 保留的历史日志文件数量
 max_files = 5
+
+# API服务器配置
+[api_server]
+# 是否启用API服务器
+enabled = true
+# API服务器端口
+port = 3000
+# 是否启用CORS支持
+cors_enabled = true

@@ -8,6 +8,7 @@ pub mod accounts;
 pub mod balances;
 pub mod sync_status;
 
+#[derive(Clone)]
 /// 数据库连接信息
 pub struct DbConnection {
     #[allow(dead_code)]

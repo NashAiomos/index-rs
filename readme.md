@@ -1,126 +1,35 @@
-# 区块链交易索引服务
+# Blockchain Index API
 
-这是一个用于同步和索引区块链交易的Rust应用程序，专门设计用于与 Internet Computer (IC) Ledger Canister 进行交互。
+这个项目是一个区块链索引服务，用于同步和索引区块链上的交易数据，并提供查询 API 。
 
-## 核心功能
+## 功能特点
 
-- 从区块链同步所有交易数据到 MongoDB 数据库
-- 根据交易计算每个账户的余额
-- 提供账户余额查询 API
-- 支持重置和完全重新同步模式
-- 实时监控新交易
-
-## 运行方式
-
-### 常规运行
-```
-cargo run
-```
-
-### 重置模式
-```
-cargo run -- --reset
-```
-重置模式会清空现有数据库，重新从区块链拉取所有交易，并重新计算余额。
-
-## 配置
-
-配置文件 `config.toml` 支持以下参数：
-```toml
-mongodb_url = "mongodb://localhost:27017"
-database = "ledger"
-ic_url = "https://icp0.io"
-ledger_canister_id = "your-canister-id"
-token_decimals = 8  # 可选，如果不设置会自动从canister查询
-
-# 日志配置
-[log]
-# 日志级别: error, warn, info, debug, trace
-level = "info"
-# 日志文件路径
-file = "logs/index-rs.log"
-# 控制台日志级别 (可选，默认为warn)
-console_level = "warn"
-# 是否启用文件日志
-file_enabled = true
-# 日志文件最大大小(MB)
-max_size = 10
-# 保留的历史日志文件数量
-max_files = 5
-```
-
-## 日志配置
-
-程序使用灵活的日志系统，可以同时输出到控制台和文件：
-
-### 配置文件设置
-
-在 `config.toml` 中可以配置日志行为：
-- **level**: 文件日志级别 (error, warn, info, debug, trace)
-- **file**: 日志文件路径，会自动创建目录
-- **console_level**: 控制台日志级别，默认为 warn，只显示警告和错误
-- **file_enabled**: 是否启用文件日志
-- **max_size**: 日志文件最大大小(MB)
-- **max_files**: 保留的历史日志文件数量
-
-### 通过环境变量配置
-
-也可以通过设置环境变量`RUST_LOG`来临时调整日志级别：
-
-```bash
-# 显示所有级别的日志
-RUST_LOG=trace cargo run
-
-# 显示调试级别及以上的日志
-RUST_LOG=debug cargo run
-
-# 默认只显示信息级别及以上的日志
-RUST_LOG=info cargo run
-
-# 只显示警告和错误
-RUST_LOG=warn cargo run
-
-# 只显示错误
-RUST_LOG=error cargo run
-```
-
-也可以为特定模块设置日志级别：
-```bash
-# 为sync模块设置debug级别，其它模块使用info级别
-RUST_LOG=info,index_rs::sync=debug cargo run
-```
-
-环境变量的优先级高于配置文件，适合临时调试使用。
-
-## 交易同步流程
-
-1. 查找所有归档交易
-2. 按区块范围排序处理归档
-3. 每个归档按批次获取交易
-4. 同步主账本最新交易
-5. 完成所有交易获取后，进行余额计算
-6. 进入定时监控模式，持续获取新交易
+- 同步区块链交易数据
+- 计算账户余额
+- 提供 RESTful API 接口查询交易和账户信息
+- 支持增量同步和全量重置
+- 支持归档数据同步
 
 ## 项目结构
 
 ```
 src/
-├── main.rs             # 主程序入口
-├── config.rs           # 配置加载和处理
-├── models.rs           # 数据模型定义
-├── utils.rs            # 工具函数集合
-├── blockchain.rs       # 区块链交互功能
-├── db/
-│   ├── mod.rs          # 数据库模块入口
-│   ├── transactions.rs # 交易数据操作
-│   ├── accounts.rs     # 账户数据操作
-│   ├── balances.rs     # 余额数据操作
-│   ├── sync_status.rs  # 同步状态管理
-├── sync/
-│   ├── mod.rs          # 同步模块入口
-│   ├── ledger.rs       # 主账本同步
-│   ├── archive.rs      # 归档同步
-│   ├── admin.rs        # 管理员功能(包含reset)
+├── main.rs              # 主程序入口
+├── api.rs               # API 功能模块，包含所有查询功能
+├── api_server.rs        # HTTP API 服务器实现
+├── models.rs            # 数据模型定义
+├── blockchain.rs        # 区块链交互功能
+├── utils.rs             # 通用工具函数
+├── config.rs            # 配置加载功能
+├── db/                  # 数据库相关功能
+│   ├── mod.rs           # 数据库模块入口
+│   ├── transactions.rs  # 交易数据库操作
+│   ├── accounts.rs      # 账户数据库操作
+│   ├── balances.rs      # 余额数据库操作
+│   └── sync_status.rs   # 同步状态数据库操作
+└── sync/                # 同步功能
+    ├── mod.rs           # 同步模块入口
+    └── admin.rs         # 管理员功能（重置等）
 ```
 
 ## 数据库集合
@@ -148,10 +57,54 @@ src/
 
 4. **运行项目**
 
+   正常启动（增量同步）
+
    ```bash
    cargo run
    ```
 
+## 配置说明
+
+使用 TOML 格式的配置文件。在启动前，请先创建 `config.toml` 配置文件
+
+主要配置项包括：
+
+```toml
+# MongoDB连接地址
+mongodb_url = "mongodb://localhost:27017"
+# 数据库名称
+database = "token_index"
+# 要索引的账本Canister ID
+ledger_canister_id = "你的Canister ID"
+# IC网络地址
+ic_url = "https://ic0.app"
+# 代币小数位数（可选，如果不设置会自动查询）
+token_decimals = 8
+
+# 日志配置
+[log]
+# 日志级别: error, warn, info, debug, trace
+level = "info"
+# 日志文件路径
+file = "logs/index-rs.log"
+# 控制台日志级别 
+console_level = "info"
+# 是否启用文件日志
+file_enabled = true
+# 日志文件最大大小(MB)
+max_size = 10
+# 保留的历史日志文件数量
+max_files = 5
+
+# API服务器配置
+[api_server]
+# 是否启用API服务器
+enabled = true
+# API服务器端口
+port = 3000
+# 是否启用CORS支持
+cors_enabled = true
+```
 
 ## 功能特性
 
@@ -196,3 +149,103 @@ src/
 2. **错误恢复**
    
    即使遇到错误，程序也会尝试自动恢复和继续同步，确保数据完整性。
+
+
+## API接口列表
+
+以下是可用的 API 接口:
+
+### 账户相关
+
+- `GET /api/balance/{account}` - 查询账户余额
+- `GET /api/transactions/{account}?limit=50&skip=0` - 查询账户交易历史
+- `GET /api/accounts?limit=100&skip=0` - 获取所有账户列表
+- `GET /api/active_accounts?limit=1000` - 获取活跃账户列表
+- `GET /api/account_count` - 获取账户总数
+
+### 交易相关
+
+- `GET /api/transaction/{index}` - 查询特定交易详情
+- `GET /api/latest_transactions?limit=20` - 获取最新交易
+- `GET /api/tx_count` - 获取交易总数
+- `POST /api/search` - 高级交易搜索
+
+### 代币相关
+
+- `GET /api/total_supply` - 获取代币总供应量
+
+## API响应格式
+
+所有 API 响应都使用统一的 JSON 格式：
+
+```json
+{
+  "success": true,
+  "data": { ... },
+  "error": null
+}
+```
+
+失败时：
+
+```json
+{
+  "success": false,
+  "data": null,
+  "error": "错误信息"
+}
+```
+
+## 示例
+
+### 查询账户余额
+
+```
+GET /api/balance/ryjl3-tyaaa-aaaaa-aaaba-cai
+```
+
+响应:
+
+```json
+{
+  "success": true,
+  "data": "1000000000",
+  "error": null
+}
+```
+
+### 查询账户交易历史
+
+```
+GET /api/transactions/ryjl3-tyaaa-aaaaa-aaaba-cai?limit=2
+```
+
+响应:
+
+```json
+{
+  "success": true,
+  "data": [
+    {
+      "kind": "transfer",
+      "timestamp": 1677721600000000000,
+      "transfer": {
+        "from": {"owner": "ryjl3-tyaaa-aaaaa-aaaba-cai"},
+        "to": {"owner": "aaaaa-aa"},
+        "amount": "100000000"
+      },
+      "index": 1024
+    },
+    {
+      "kind": "mint",
+      "timestamp": 1677721500000000000,
+      "mint": {
+        "to": {"owner": "ryjl3-tyaaa-aaaaa-aaaba-cai"},
+        "amount": "1000000000"
+      },
+      "index": 1023
+    }
+  ],
+  "error": null
+}
+```

@@ -205,6 +205,16 @@ pub struct Config {
     pub ic_url: String,
     pub token_decimals: Option<u8>, // 可选配置，如果未指定则查询获取
     pub log: Option<LogConfig>,    // 日志配置
+    pub api_server: Option<ApiServerConfig>, // API服务器配置
+}
+
+// API服务器配置结构体
+#[derive(Debug, Deserialize, Clone)]
+pub struct ApiServerConfig {
+    pub enabled: bool,       // 是否启用API服务器
+    pub port: u16,           // API服务器监听端口
+    #[allow(dead_code)]
+    pub cors_enabled: bool,  // 是否启用CORS
 }
 
 // 命令行参数结构体

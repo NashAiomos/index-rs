@@ -9,14 +9,20 @@ use crate::utils::create_error;
 
 /// 加载应用配置
 pub async fn load_config() -> Result<AppConfig, Box<dyn Error>> {
+    // 使用TOML配置文件
     let settings = match config_rs::Config::builder()
-        .add_source(config_rs::File::with_name("config"))
+        .add_source(config_rs::File::with_name("config").required(false))
         .build() {
         Ok(config) => config,
         Err(e) => {
             return Err(create_error(&format!("配置文件错误: {}", e)));
         }
     };
+    
+    // 如果没有找到任何配置文件，返回错误
+    if settings.get_string("mongodb_url").is_err() {
+        return Err(create_error("未找到配置文件。请创建config.toml"));
+    }
     
     let cfg: AppConfig = match settings.try_deserialize() {
         Ok(c) => c,

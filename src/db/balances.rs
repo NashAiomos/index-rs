@@ -557,7 +557,7 @@ async fn save_account_balance(
 }
 
 /// 规范化账户ID，去除全0子账户
-fn normalize_account_id(account: &str) -> String {
+pub fn normalize_account_id(account: &str) -> String {
     // 拆分账户字符串，检查principal和子账户
     let parts: Vec<&str> = account.split(':').collect();
     
