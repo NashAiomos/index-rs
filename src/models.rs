@@ -4,7 +4,7 @@ use serde::{Deserialize, Serialize};
 use std::fmt;
 
 // 常量定义
-pub const BATCH_SIZE: u64 = 1000;
+pub const BATCH_SIZE: u64 = 2000;
 pub const ARCHIVE_BATCH_SIZE: u64 = 2000;
 pub const DEFAULT_DECIMALS: u8 = 8;
 

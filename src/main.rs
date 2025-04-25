@@ -41,6 +41,10 @@ async fn main() -> Result<(), Box<dyn Error>> {
         // 继续执行，但日志会输出到标准错误
     }
     
+    info!("=================================");
+    info!("===========  服务启动  ===========");
+    info!("=================================");
+    
     info!("正在启动区块链索引服务...");
     
     // 设置全局错误捕获
@@ -110,7 +114,7 @@ fn setup_logger(cfg: &models::Config) -> Result<(), Box<dyn Error>> {
     let pattern = "[{d(%Y-%m-%d %H:%M:%S)}] [{l}] - {m}{n}";
     let encoder = PatternEncoder::new(pattern);
     
-    // 创建控制台输出（如果需要）
+    // 创建控制台输出（后面如果关掉日志，就会打印在控制台）
     let stdout = ConsoleAppender::builder()
         .target(Target::Stdout)
         .encoder(Box::new(encoder.clone()))
@@ -262,10 +266,10 @@ async fn run_application(cfg: models::Config) -> Result<(), Box<dyn Error>> {
         // 先同步归档数据
         let _archives_result = sync_archive_transactions(
             &agent,
-            &canister_id, 
-            &db_conn.tx_col, 
-            &db_conn.accounts_col, 
-            &db_conn.balances_col, 
+            &canister_id,
+            &db_conn.tx_col,
+            &db_conn.accounts_col,
+            &db_conn.balances_col,
             token_decimals,
             false // 不计算余额
         ).await?;
@@ -274,10 +278,10 @@ async fn run_application(cfg: models::Config) -> Result<(), Box<dyn Error>> {
         info!("开始同步ledger交易...");
         let ledger_txs = if let Ok(txs) = sync_ledger_transactions(
             &agent,
-            &canister_id, 
-            &db_conn.tx_col, 
-            &db_conn.accounts_col, 
-            &db_conn.balances_col, 
+            &canister_id,
+            &db_conn.tx_col,
+            &db_conn.accounts_col,
+            &db_conn.balances_col,
             token_decimals,
             false // 不计算余额
         ).await {
@@ -297,8 +301,8 @@ async fn run_application(cfg: models::Config) -> Result<(), Box<dyn Error>> {
                 if let Some(index) = last_tx.index {
                     info!("设置增量同步起点为最后一笔交易索引: {}", index);
                     set_incremental_mode(
-                        &db_conn.sync_status_col, 
-                        index, 
+                        &db_conn.sync_status_col,
+                        index,
                         last_tx.timestamp
                     ).await?;
                 }
