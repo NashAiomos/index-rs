@@ -1,12 +1,13 @@
 use std::error::Error;
-use mongodb::{Collection, bson::{doc, Document}};
+use mongodb::Collection;
+use mongodb::bson::{doc, Document};
 use mongodb::options::FindOptions;
-use candid::Nat;
 use log::debug;
 use crate::models::Transaction;
 use crate::db::balances::normalize_account_id;
 use futures::stream::TryStreamExt;
 use mongodb::options::FindOneOptions;
+use crate::db::supply;
 
 /// API模块，提供所有对外查询功能
 /// 包括地址、交易和余额的相关查询
@@ -230,28 +231,13 @@ pub async fn get_all_accounts(
 
 /// 获取代币总供应量（通过所有账户余额计算）
 pub async fn get_total_supply(
-    balances_col: &Collection<Document>,
+    supply_col: &Collection<Document>,
 ) -> Result<String, Box<dyn Error>> {
-    debug!("计算代币总供应量");
-    
-    let mut total_supply = Nat::from(0u64);
-    
-    // 获取所有余额记录
-    let balances_cursor = balances_col.find(doc! {}, None).await?;
-    
-    // 收集余额记录
-    let balances: Vec<Document> = balances_cursor.try_collect().await?;
-    
-    // 计算总供应量
-    for doc in balances {
-        if let Ok(balance_str) = doc.get_str("balance") {
-            if let Ok(balance) = Nat::parse(balance_str.as_bytes()) {
-                total_supply += balance;
-            }
-        }
+    debug!("获取代币总供应量");
+    if let Some(value) = supply::get_stored_total_supply(supply_col).await? {
+        return Ok(value);
     }
-    
-    Ok(total_supply.to_string())
+    Ok("0".to_string())
 }
 
 /// 统计交易总数

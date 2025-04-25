@@ -18,16 +18,17 @@ pub async fn sync_ledger_transactions(
     canister_id: &Principal,
     tx_col: &Collection<Document>,
     accounts_col: &Collection<Document>,
-    balances_col: &Collection<Document>,
+    _balances_col: &Collection<Document>,
+    _supply_col: &Collection<Document>,
     _token_decimals: u8,
-    _calculate_balance: bool, // 是否计算余额
+    _calculate_balance: bool,
 ) -> Result<Vec<Transaction>, Box<dyn Error>> {
     // 首先检查同步状态
     let mut start_from_sync_status = false;
     let mut sync_status_index = 0;
     
     // 兼容现有API，第5个参数是sync_status_col
-    let sync_status_col = balances_col;
+    let sync_status_col = _balances_col;
     
     if let Ok(Some(status)) = get_sync_status(sync_status_col).await {
         if status.sync_mode == "incremental" && status.last_synced_index > 0 {

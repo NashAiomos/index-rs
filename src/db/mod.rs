@@ -7,6 +7,7 @@ pub mod transactions;
 pub mod accounts;
 pub mod balances;
 pub mod sync_status;
+pub mod supply;
 
 #[derive(Clone)]
 /// 数据库连接信息
@@ -16,6 +17,7 @@ pub struct DbConnection {
     pub tx_col: Collection<Document>,
     pub accounts_col: Collection<Document>,
     pub balances_col: Collection<Document>,
+    pub total_supply_col: Collection<Document>,
     pub sync_status_col: Collection<Document>,
 }
 
@@ -43,6 +45,7 @@ pub async fn init_db(mongodb_url: &str, database_name: &str) -> Result<DbConnect
     let accounts_col: Collection<Document> = db.collection("accounts");
     let tx_col: Collection<Document> = db.collection("transactions");
     let balances_col: Collection<Document> = db.collection("balances");
+    let total_supply_col: Collection<Document> = db.collection("total_supply");
     let sync_status_col: Collection<Document> = db.collection("sync_status");
     
     Ok(DbConnection {
@@ -50,6 +53,7 @@ pub async fn init_db(mongodb_url: &str, database_name: &str) -> Result<DbConnect
         tx_col,
         accounts_col,
         balances_col,
+        total_supply_col,
         sync_status_col,
     })
 }

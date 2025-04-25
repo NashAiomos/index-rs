@@ -18,6 +18,7 @@ pub async fn sync_archive_transactions(
     tx_col: &Collection<Document>,
     accounts_col: &Collection<Document>,
     _balances_col: &Collection<Document>,
+    _supply_col: &Collection<Document>,
     _token_decimals: u8,
     calculate_balance: bool,
 ) -> Result<Vec<Transaction>, Box<dyn Error>> {

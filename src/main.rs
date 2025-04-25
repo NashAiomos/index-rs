@@ -43,9 +43,9 @@ async fn main() -> Result<(), Box<dyn Error>> {
         // 继续执行，但日志会输出到标准错误
     }
     
-    info!("=================================");
-    info!("===========  服务启动  ===========");
-    info!("=================================");
+    info!("=======================================");
+    info!("==============  服务启动  ==============");
+    info!("=======================================");
     
     info!("正在启动区块链索引服务...");
     
@@ -272,6 +272,7 @@ async fn run_application(cfg: models::Config) -> Result<(), Box<dyn Error>> {
             &db_conn.tx_col,
             &db_conn.accounts_col,
             &db_conn.balances_col,
+            &db_conn.total_supply_col,
             token_decimals,
             false // 不计算余额
         ).await?;
@@ -284,6 +285,7 @@ async fn run_application(cfg: models::Config) -> Result<(), Box<dyn Error>> {
             &db_conn.tx_col,
             &db_conn.accounts_col,
             &db_conn.balances_col,
+            &db_conn.total_supply_col,
             token_decimals,
             false // 不计算余额
         ).await {
@@ -398,6 +400,7 @@ async fn run_application(cfg: models::Config) -> Result<(), Box<dyn Error>> {
             &db_conn.tx_col, 
             &db_conn.accounts_col, 
             &db_conn.balances_col, 
+            &db_conn.total_supply_col,
             token_decimals,
             false // 增量同步时不再实时计算余额
         ).await {
@@ -410,6 +413,7 @@ async fn run_application(cfg: models::Config) -> Result<(), Box<dyn Error>> {
                         &db_conn.tx_col,
                         &db_conn.accounts_col,
                         &db_conn.balances_col,
+                        &db_conn.total_supply_col,
                         token_decimals
                     ).await {
                         Ok((success, error)) => {

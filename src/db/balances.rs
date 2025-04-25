@@ -8,6 +8,7 @@ use num_traits::Zero;
 use log::{info, error, warn, debug};
 use crate::models::Transaction;
 use crate::utils::{create_error, format_token_amount};
+use crate::db::supply;
 
 /// 获取账户余额
 #[allow(dead_code)]
@@ -50,6 +51,7 @@ pub async fn calculate_all_balances(
     accounts_col: &Collection<Document>,
     tx_col: &Collection<Document>,
     balances_col: &Collection<Document>,
+    supply_col: &Collection<Document>,
     token_decimals: u8,
 ) -> Result<(u64, u64), Box<dyn Error>> {
     info!("开始计算所有账户余额...");
@@ -123,7 +125,11 @@ pub async fn calculate_all_balances(
         }
     }
     
-    info!("余额计算完成: 成功 {} 个账户, 失败 {} 个账户", success_count, error_count);
+    info!("全量余额计算完成: 处理 {} 个账户, 失败 {} 个账户", success_count, error_count);
+
+    // 重新计算并保存总供应量
+    supply::recalculate_total_supply(balances_col, supply_col).await?;
+
     Ok((success_count, error_count))
 }
 
@@ -134,6 +140,7 @@ pub async fn calculate_incremental_balances(
     tx_col: &Collection<Document>,
     accounts_col: &Collection<Document>,
     balances_col: &Collection<Document>,
+    supply_col: &Collection<Document>,
     token_decimals: u8,
 ) -> Result<(u64, u64), Box<dyn Error>> {
     if new_transactions.is_empty() {
@@ -250,7 +257,11 @@ pub async fn calculate_incremental_balances(
         }
     }
     
-    info!("增量余额计算完成: 成功更新 {} 个账户, 失败 {} 个账户", success_count, error_count);
+    info!("增量余额计算完成: 更新 {} 个账户, 失败 {} 个账户", success_count, error_count);
+    
+    // 重新计算并保存总供应量
+    supply::recalculate_total_supply(balances_col, supply_col).await?;
+
     Ok((success_count, error_count))
 }
 

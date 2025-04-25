@@ -54,6 +54,7 @@ pub async fn reset_and_sync_all_transactions(
         &db_conn.tx_col,
         &db_conn.accounts_col,
         &db_conn.balances_col,
+        &db_conn.total_supply_col,
         token_decimals,
         false // 不计算余额，只保存交易
     ).await?;
@@ -78,6 +79,7 @@ pub async fn reset_and_sync_all_transactions(
         &db_conn.tx_col,
         &db_conn.accounts_col,
         &db_conn.balances_col,
+        &db_conn.total_supply_col,
         token_decimals,
         false // 不计算余额，只保存交易
     ).await?;
@@ -127,6 +129,7 @@ pub async fn calculate_all_balances(
         &db_conn.accounts_col,
         &db_conn.tx_col,
         &db_conn.balances_col,
+        &db_conn.total_supply_col,
         token_decimals
     ).await {
         Ok((success, error)) => {

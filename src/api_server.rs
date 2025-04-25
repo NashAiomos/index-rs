@@ -283,7 +283,7 @@ async fn handle_get_account_count(
 async fn handle_get_total_supply(
     db_conn: Arc<DbConnection>,
 ) -> Result<impl Reply, Rejection> {
-    match api::get_total_supply(&db_conn.balances_col).await {
+    match api::get_total_supply(&db_conn.total_supply_col).await {
         Ok(supply) => {
             let response = ApiResponse::success(supply);
             Ok(warp::reply::json(&response))
