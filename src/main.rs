@@ -414,6 +414,7 @@ async fn run_application(cfg: models::Config) -> Result<(), Box<dyn Error>> {
                         &db_conn.accounts_col,
                         &db_conn.balances_col,
                         &db_conn.total_supply_col,
+                        &db_conn.balance_anomalies_col,
                         token_decimals
                     ).await {
                         Ok((success, error)) => {

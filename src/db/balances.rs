@@ -1,4 +1,7 @@
 use std::error::Error;
+use std::sync::Arc;
+use std::collections::HashMap;
+use tokio::sync::Mutex;
 use mongodb::{Collection};
 use mongodb::bson::{doc, Bson, Document};
 use mongodb::options::FindOptions;
@@ -6,9 +9,22 @@ use tokio::time::Duration;
 use candid::Nat;
 use num_traits::Zero;
 use log::{info, error, warn, debug};
-use crate::models::Transaction;
+use crate::models::{Transaction, BalanceAnomaly};
 use crate::utils::{create_error, format_token_amount};
 use crate::db::supply;
+
+// 全局账户锁映射
+lazy_static::lazy_static! {
+    static ref ACCOUNT_LOCKS: Mutex<HashMap<String, Arc<Mutex<()>>>> = Mutex::new(HashMap::new());
+}
+
+/// 获取账户锁
+async fn get_account_lock(account: &str) -> Arc<Mutex<()>> {
+    let mut locks = ACCOUNT_LOCKS.lock().await;
+    locks.entry(account.to_string())
+        .or_insert_with(|| Arc::new(Mutex::new(())))
+        .clone()
+}
 
 /// 获取账户余额
 #[allow(dead_code)]
@@ -52,6 +68,7 @@ pub async fn calculate_all_balances(
     tx_col: &Collection<Document>,
     balances_col: &Collection<Document>,
     supply_col: &Collection<Document>,
+    anomalies_col: &Collection<Document>,
     token_decimals: u8,
 ) -> Result<(u64, u64), Box<dyn Error>> {
     info!("开始计算所有账户余额...");
@@ -64,6 +81,7 @@ pub async fn calculate_all_balances(
     
     let mut success_count = 0u64;
     let mut error_count = 0u64;
+    let mut total_anomalies = 0u64;
     
     // 遍历所有账户
     while accounts_cursor.advance().await? {
@@ -105,12 +123,16 @@ pub async fn calculate_all_balances(
         }
         
         // 计算该账户的余额
-        match calculate_account_balance(&account, &tx_indices, tx_col, token_decimals).await {
-            Ok(balance) => {
+        match calculate_account_balance(&account, &tx_indices, tx_col, token_decimals, anomalies_col).await {
+            Ok((balance, has_anomalies)) => {
                 // 更新余额记录
                 match save_account_balance(balances_col, &account, &balance).await {
                     Ok(_) => {
                         success_count += 1;
+                        if has_anomalies {
+                            total_anomalies += 1;
+                            info!("账户 {} 在余额计算中检测到异常，已记录详细信息", account);
+                        }
                     },
                     Err(e) => {
                         error!("保存账户 {} 余额失败: {}", account, e);
@@ -125,7 +147,8 @@ pub async fn calculate_all_balances(
         }
     }
     
-    info!("全量余额计算完成: 处理 {} 个账户, 失败 {} 个账户", success_count, error_count);
+    info!("全量余额计算完成: 处理 {} 个账户, 失败 {} 个账户, 检测到 {} 个余额异常", 
+          success_count, error_count, total_anomalies);
 
     // 重新计算并保存总供应量
     supply::recalculate_total_supply(balances_col, supply_col).await?;
@@ -141,6 +164,7 @@ pub async fn calculate_incremental_balances(
     accounts_col: &Collection<Document>,
     balances_col: &Collection<Document>,
     supply_col: &Collection<Document>,
+    anomalies_col: &Collection<Document>,
     token_decimals: u8,
 ) -> Result<(u64, u64), Box<dyn Error>> {
     if new_transactions.is_empty() {
@@ -200,13 +224,29 @@ pub async fn calculate_incremental_balances(
     
     let mut success_count = 0u64;
     let mut error_count = 0u64;
+    let mut total_anomalies = 0u64;
+    
+    // 顺序处理每个受影响的账户，但使用账户锁确保并发安全
     
     // 处理每个受影响的账户
     for account in affected_accounts {
-        let account_doc = match accounts_col.find_one(doc! { "account": &account }, None).await? {
-            Some(doc) => doc,
-            None => {
+        // 获取账户锁
+        let account_lock = get_account_lock(&account).await;
+        
+        // 获取账户锁，确保在更新余额期间只有一个线程操作此账户
+        let _guard = account_lock.lock().await;
+        debug!("获取账户 {} 的锁", account);
+        
+        // 查询账户交易索引
+        let account_doc = match accounts_col.find_one(doc! { "account": &account }, None).await {
+            Ok(Some(doc)) => doc,
+            Ok(None) => {
                 error!("找不到账户 {} 的记录", account);
+                error_count += 1;
+                continue;
+            },
+            Err(e) => {
+                error!("查询账户 {} 时出错: {}", account, e);
                 error_count += 1;
                 continue;
             }
@@ -237,12 +277,16 @@ pub async fn calculate_incremental_balances(
         }
         
         // 计算该账户的余额
-        match calculate_account_balance(&account, &tx_indices, tx_col, token_decimals).await {
-            Ok(balance) => {
+        match calculate_account_balance(&account, &tx_indices, tx_col, token_decimals, anomalies_col).await {
+            Ok((balance, has_anomalies)) => {
                 // 更新余额记录
                 match save_account_balance(balances_col, &account, &balance).await {
                     Ok(_) => {
                         success_count += 1;
+                        if has_anomalies {
+                            total_anomalies += 1;
+                            info!("账户 {} 在余额计算中检测到异常，已记录详细信息", account);
+                        }
                     },
                     Err(e) => {
                         error!("保存账户 {} 余额失败: {}", account, e);
@@ -257,11 +301,12 @@ pub async fn calculate_incremental_balances(
         }
     }
     
-    info!("增量余额计算完成: 更新 {} 个账户, 失败 {} 个账户", success_count, error_count);
+    info!("增量余额计算完成: 更新 {} 个账户, 失败 {} 个账户, 检测到 {} 个余额异常", 
+          success_count, error_count, total_anomalies);
     
     // 重新计算并保存总供应量
     supply::recalculate_total_supply(balances_col, supply_col).await?;
-
+   
     Ok((success_count, error_count))
 }
 
@@ -271,11 +316,13 @@ async fn calculate_account_balance(
     tx_indices: &[i64],
     tx_col: &Collection<Document>,
     token_decimals: u8,
-) -> Result<Nat, Box<dyn Error>> {
+    anomalies_col: &Collection<Document>,
+) -> Result<(Nat, bool), Box<dyn Error>> {
     // 规范化账户ID
     let normalized_account = normalize_account_id(account);
     let mut balance = Nat::from(0u64);
     let mut processed_count = 0u64;
+    let mut has_anomalies = false;
     
     // 查询与该账户相关的所有交易
     let filter = doc! { 
@@ -302,6 +349,9 @@ async fn calculate_account_balance(
                 continue;
             }
         };
+        
+        // 获取交易索引，用于记录异常
+        let tx_index = tx.index.unwrap_or(0);
         
         // 检查交易状态 - 如果存在status字段且不是"COMPLETED"或"SUCCESS"，则跳过
         if let Some(status) = tx_doc.get_str("status").ok() {
@@ -373,14 +423,34 @@ async fn calculate_account_balance(
                         let error_msg = format!("账户 {} 的余额不足，当前余额: {}, 转账金额: {}", 
                                               normalized_account, balance.0, transfer.amount.0);
                         // 安全扣减余额，确保不会变成负数
-                        safe_subtract_balance(&mut balance, &transfer.amount, &error_msg);
+                        if let Ok(anomaly) = safe_subtract_balance_with_logging(
+                            &mut balance, 
+                            &transfer.amount, 
+                            &error_msg,
+                            &normalized_account,
+                            tx_index,
+                            "transfer",
+                            anomalies_col
+                        ).await {
+                            has_anomalies = has_anomalies || anomaly;
+                        }
                         
                         // 减去手续费
                         if let Some(ref fee) = transfer.fee {
                             if !fee.0.is_zero() {
                                 let fee_error_msg = format!("账户 {} 的余额不足以支付手续费，当前余额: {}, 手续费: {}", 
                                                          normalized_account, balance.0, fee.0);
-                                safe_subtract_balance(&mut balance, fee, &fee_error_msg);
+                                if let Ok(anomaly) = safe_subtract_balance_with_logging(
+                                    &mut balance, 
+                                    fee, 
+                                    &fee_error_msg,
+                                    &normalized_account,
+                                    tx_index,
+                                    "transfer_fee",
+                                    anomalies_col
+                                ).await {
+                                    has_anomalies = has_anomalies || anomaly;
+                                }
                             }
                         }
                     }
@@ -422,7 +492,17 @@ async fn calculate_account_balance(
                     if account_match(&from_account, &normalized_account) {
                         let error_msg = format!("账户 {} 的余额不足，当前余额: {}, 销毁金额: {}", 
                                               normalized_account, balance.0, burn.amount.0);
-                        safe_subtract_balance(&mut balance, &burn.amount, &error_msg);
+                        if let Ok(anomaly) = safe_subtract_balance_with_logging(
+                            &mut balance, 
+                            &burn.amount, 
+                            &error_msg,
+                            &normalized_account,
+                            tx_index,
+                            "burn",
+                            anomalies_col
+                        ).await {
+                            has_anomalies = has_anomalies || anomaly;
+                        }
                     }
                     
                     // 记录spender操作
@@ -443,7 +523,17 @@ async fn calculate_account_balance(
                             if !fee.0.is_zero() {
                                 let fee_error_msg = format!("账户 {} 的余额不足以支付授权手续费，当前余额: {}, 手续费: {}", 
                                                          normalized_account, balance.0, fee.0);
-                                safe_subtract_balance(&mut balance, fee, &fee_error_msg);
+                                if let Ok(anomaly) = safe_subtract_balance_with_logging(
+                                    &mut balance, 
+                                    fee, 
+                                    &fee_error_msg,
+                                    &normalized_account,
+                                    tx_index,
+                                    "approve_fee",
+                                    anomalies_col
+                                ).await {
+                                    has_anomalies = has_anomalies || anomaly;
+                                }
                             }
                         }
                     }
@@ -464,10 +554,78 @@ async fn calculate_account_balance(
     // 使用更精简的日志格式
     debug!("已完成 {} 余额计算，共 {} 笔交易，余额：{} ({} 代币)", 
            normalized_account, processed_count, balance.0, format_token_amount(&balance, token_decimals));
-    Ok(balance)
+           
+    if has_anomalies {
+        info!("账户 {} 在余额计算中检测到异常，已记录详细信息", normalized_account);
+    }
+    
+    Ok((balance, has_anomalies))
 }
 
 /// 安全减少余额，确保不会变成负数
+/// 如果余额不足，将记录异常情况
+async fn safe_subtract_balance_with_logging(
+    balance: &mut Nat,
+    amount: &Nat,
+    warning_msg: &str,
+    account: &str,
+    tx_index: u64,
+    tx_type: &str,
+    anomalies_col: &Collection<Document>
+) -> Result<bool, Box<dyn Error>> {
+    let mut anomaly_detected = false;
+    
+    if *balance >= *amount {
+        *balance = balance.clone() - amount.clone();
+    } else {
+        warn!("警告: {}", warning_msg);
+        
+        // 记录余额异常
+        let anomaly = BalanceAnomaly {
+            account: account.to_string(),
+            tx_index,
+            tx_type: tx_type.to_string(),
+            anomaly_type: "insufficient_balance".to_string(),
+            balance: balance.0.to_string(),
+            amount: amount.0.to_string(),
+            description: warning_msg.to_string(),
+            timestamp: chrono::Utc::now().timestamp(),
+        };
+        
+        // 将异常记录保存到数据库
+        if let Err(e) = log_balance_anomaly(anomalies_col, &anomaly).await {
+            error!("记录余额异常失败: {}", e);
+        } else {
+            anomaly_detected = true;
+        }
+        
+        *balance = Nat::from(0u64);
+    }
+    
+    Ok(anomaly_detected)
+}
+
+/// 保存余额异常记录到数据库
+async fn log_balance_anomaly(
+    anomalies_col: &Collection<Document>,
+    anomaly: &BalanceAnomaly
+) -> Result<(), Box<dyn Error>> {
+    let anomaly_doc = mongodb::bson::to_document(anomaly)?;
+    
+    match anomalies_col.insert_one(anomaly_doc, None).await {
+        Ok(_) => {
+            debug!("已记录账户 {} 的余额异常 (交易索引: {})", anomaly.account, anomaly.tx_index);
+            Ok(())
+        },
+        Err(e) => {
+            error!("保存余额异常记录失败: {}", e);
+            Err(create_error(&format!("保存余额异常记录失败: {}", e)))
+        }
+    }
+}
+
+/// 安全减法：从余额中减去金额，如果余额不足则记录警告并设为0
+#[allow(dead_code)]
 fn safe_subtract_balance(balance: &mut Nat, amount: &Nat, warning_msg: &str) {
     if *balance >= *amount {
         *balance = balance.clone() - amount.clone();

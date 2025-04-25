@@ -222,3 +222,24 @@ pub struct ApiServerConfig {
 pub struct AppArgs {
     pub reset: bool,
 }
+
+/// 余额异常记录
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct BalanceAnomaly {
+    /// 账户ID
+    pub account: String,
+    /// 交易索引
+    pub tx_index: u64,
+    /// 交易类型
+    pub tx_type: String,
+    /// 异常类型
+    pub anomaly_type: String,
+    /// 当时账户余额
+    pub balance: String,
+    /// 尝试操作的金额
+    pub amount: String,
+    /// 异常描述
+    pub description: String,
+    /// 记录时间
+    pub timestamp: i64,
+}

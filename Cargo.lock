@@ -1426,6 +1426,7 @@ dependencies = [
  "futures-util",
  "hex",
  "ic-agent",
+ "lazy_static",
  "log",
  "log4rs",
  "mongodb",

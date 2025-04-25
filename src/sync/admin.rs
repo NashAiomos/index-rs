@@ -130,6 +130,7 @@ pub async fn calculate_all_balances(
         &db_conn.tx_col,
         &db_conn.balances_col,
         &db_conn.total_supply_col,
+        &db_conn.balance_anomalies_col,
         token_decimals
     ).await {
         Ok((success, error)) => {

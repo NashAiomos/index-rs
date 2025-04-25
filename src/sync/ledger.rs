@@ -2,7 +2,7 @@ use std::error::Error;
 use ic_agent::Agent;
 use ic_agent::export::Principal;
 use tokio::time::Duration;
-use mongodb::{Collection, bson::Document};
+use mongodb::{Collection, bson::{doc, Document}};
 use log::{info, error, warn, debug};
 use crate::db::transactions::get_latest_transaction_index;
 use crate::blockchain::{get_first_transaction_index, fetch_ledger_transactions};
@@ -11,6 +11,94 @@ use crate::db::accounts::save_account_transaction;
 use crate::db::sync_status::{get_sync_status, set_incremental_mode};
 use crate::utils::group_transactions_by_account;
 use crate::models::{Transaction, BATCH_SIZE};
+
+/// 验证同步点附近交易的完整性
+/// 检查上次同步的最新交易和前几笔交易是否存在，如果不存在可能需要从早一点的位置重新同步
+async fn verify_synced_transactions(
+    tx_col: &Collection<Document>,
+    _sync_status_col: &Collection<Document>,
+    last_synced_index: u64,
+    verification_range: u64,
+) -> Result<(bool, u64), Box<dyn Error>> {
+    info!("验证同步点附近交易的完整性，从索引 {} 开始检查 {} 条记录", 
+          last_synced_index.saturating_sub(verification_range), verification_range);
+    
+    // 验证最后同步的交易是否存在
+    let last_tx_exists = tx_col
+        .find_one(doc! { "index": last_synced_index as i64 }, None)
+        .await?
+        .is_some();
+    
+    if !last_tx_exists {
+        warn!("最后同步的交易(索引:{})在数据库中不存在，可能需要从更早的位置重新同步", last_synced_index);
+        
+        // 查找最近的有效交易
+        let start_from = last_synced_index.saturating_sub(verification_range);
+        let mut valid_point = start_from;
+        let mut found_valid = false;
+        
+        for i in start_from..last_synced_index {
+            let tx_exists = tx_col
+                .find_one(doc! { "index": i as i64 }, None)
+                .await?
+                .is_some();
+            
+            if tx_exists {
+                valid_point = i;
+                found_valid = true;
+                info!("找到最近的有效交易点: {}", valid_point);
+                break;
+            }
+        }
+        
+        if !found_valid {
+            warn!("未找到 {} 到 {} 范围内的有效交易点，将重置到 {}", 
+                 start_from, last_synced_index, start_from);
+            valid_point = start_from;
+        }
+        
+        // 返回验证失败和推荐的起始点
+        return Ok((false, valid_point));
+    }
+    
+    // 检查连续性 - 从最后同步点往前验证一定数量的交易
+    let mut continuity_valid = true;
+    let check_limit = verification_range.min(last_synced_index);
+    let mut missing_indices = Vec::new();
+    
+    for i in 1..=check_limit {
+        let index = last_synced_index - i;
+        let tx_exists = tx_col
+            .find_one(doc! { "index": index as i64 }, None)
+            .await?
+            .is_some();
+        
+        if !tx_exists {
+            continuity_valid = false;
+            missing_indices.push(index);
+        }
+    }
+    
+    if !continuity_valid {
+        warn!("同步点附近发现不连续的交易，缺失的索引: {:?}", missing_indices);
+        
+        // 找到最近的连续点
+        let mut valid_point = last_synced_index;
+        for i in 1..=check_limit {
+            let index = last_synced_index - i;
+            if missing_indices.contains(&index) {
+                valid_point = index.saturating_sub(1);
+            } else {
+                break;
+            }
+        }
+        
+        return Ok((false, valid_point));
+    }
+    
+    info!("同步点附近交易验证成功，数据完整性正常");
+    Ok((true, last_synced_index))
+}
 
 /// 直接使用已知的交易起点和偏移量查询数据
 pub async fn sync_ledger_transactions(
@@ -23,18 +111,41 @@ pub async fn sync_ledger_transactions(
     _token_decimals: u8,
     _calculate_balance: bool,
 ) -> Result<Vec<Transaction>, Box<dyn Error>> {
+    // 兼容现有API，第5个参数是sync_status_col
+    let sync_status_col = _balances_col;
+    
     // 首先检查同步状态
     let mut start_from_sync_status = false;
     let mut sync_status_index = 0;
-    
-    // 兼容现有API，第5个参数是sync_status_col
-    let sync_status_col = _balances_col;
     
     if let Ok(Some(status)) = get_sync_status(sync_status_col).await {
         if status.sync_mode == "incremental" && status.last_synced_index > 0 {
             info!("从同步状态恢复，上次同步到索引: {}", status.last_synced_index);
             start_from_sync_status = true;
             sync_status_index = status.last_synced_index;
+            
+            // 验证同步点附近交易的完整性
+            let verification_range = 20; // 验证前20笔交易
+            match verify_synced_transactions(tx_col, sync_status_col, sync_status_index, verification_range).await {
+                Ok((valid, recommended_point)) => {
+                    if !valid {
+                        warn!("同步点验证失败，将从索引 {} 重新开始同步", recommended_point);
+                        sync_status_index = recommended_point;
+                        
+                        // 更新同步状态
+                        if let Err(e) = set_incremental_mode(sync_status_col, recommended_point, 0).await {
+                            error!("更新同步状态失败: {}", e);
+                        } else {
+                            info!("已更新同步状态到索引 {}", recommended_point);
+                        }
+                    } else {
+                        info!("同步点验证成功，将从索引 {} 继续同步", sync_status_index + 1);
+                    }
+                },
+                Err(e) => {
+                    warn!("验证同步点时发生错误: {}，将使用原始同步点", e);
+                }
+            }
         } else {
             info!("同步状态显示为全量同步模式或起始状态");
         }
