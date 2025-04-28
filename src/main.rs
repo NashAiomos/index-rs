@@ -55,7 +55,22 @@ async fn main() -> Result<(), Box<dyn Error>> {
     // 处理顶层错误
     if let Err(e) = &result {
         error!("程序执行过程中发生错误: {}", e);
-        // 可以在这里添加额外的错误处理逻辑，如发送警报通知等
+        let error_details = format!("{:?}", e);
+        error!("详细错误信息: {}", error_details);
+        
+        if error_details.contains("mongodb") || error_details.contains("connection") {
+            error!("可能是数据库连接问题，请检查MongoDB服务是否正常运行以及连接配置是否正确");
+        } else if error_details.contains("canister") || error_details.contains("agent") || error_details.contains("ic") {
+            error!("可能是IC网络连接问题，请检查网络连接以及canister ID配置是否正确");
+        } else if error_details.contains("permission") || error_details.contains("access") {
+            error!("可能是文件或资源访问权限问题，请检查程序运行权限");
+        }
+        
+        error!("建议尝试以下恢复步骤:");
+        error!("1. 检查配置文件中的参数设置");
+        error!("2. 确认网络连接状态");
+        error!("3. 验证数据库服务是否可用");
+        error!("4. 使用 --reset 参数重新启动尝试完全同步");
     }
     
     result
@@ -295,7 +310,7 @@ async fn run_application(cfg: models::Config) -> Result<(), Box<dyn Error>> {
             Vec::new()
         };
         
-        // 阶段2：使用新算法根据账户交易记录计算余额
+        // 阶段2：根据账户交易记录计算余额
         info!("阶段2：根据账户交易记录统一计算余额...");
         calculate_all_balances(&db_conn, token_decimals).await?;
         
