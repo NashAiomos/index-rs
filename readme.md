@@ -1,6 +1,6 @@
 # Blockchain Index API
 
-这个项目是一个区块链索引服务，用于同步和索引区块链上的交易数据，并提供查询 API 。
+一个区块链索引服务，用于同步和索引区块链上的交易数据，并提供查询 API 。
 
 ## 功能特点
 
@@ -161,17 +161,17 @@ cors_enabled = true
 ### 账户相关
 
 - `GET /api/balance/{account}` - 查询账户余额
-- `GET /api/transactions/{account}?limit=50&skip=0` - 查询账户交易历史
-- `GET /api/accounts?limit=100&skip=0` - 获取所有账户列表
-- `GET /api/active_accounts?limit=1000` - 获取活跃账户列表
+- `GET /api/transactions/{account}?limit={limit}&skip={skip}` - 查询账户交易历史
+- `GET /api/accounts?limit={limit}&skip={skip}` - 获取所有账户列表
+- `GET /api/active_accounts?limit={limit}&skip={skip}` - 获取活跃账户列表
 - `GET /api/account_count` - 获取账户总数
 
 ### 交易相关
 
 - `GET /api/transaction/{index}` - 查询特定交易详情
-- `GET /api/latest_transactions?limit=20` - 获取最新交易
+- `GET /api/latest_transactions?limit={limit}&skip={skip}` - 获取最新交易
 - `GET /api/tx_count` - 获取交易总数
-- `POST /api/search` - 高级交易搜索
+- `POST /api/search` - 高级交易搜索（请求体支持 JSON 格式的过滤条件）
 
 ### 代币相关
 
@@ -220,7 +220,7 @@ GET /api/balance/ryjl3-tyaaa-aaaaa-aaaba-cai
 ### 查询账户交易历史
 
 ```
-GET /api/transactions/ryjl3-tyaaa-aaaaa-aaaba-cai?limit=2
+GET /api/transactions/ryjl3-tyaaa-aaaaa-aaaba-cai?limit=2&skip=0
 ```
 
 响应:
@@ -247,6 +247,198 @@ GET /api/transactions/ryjl3-tyaaa-aaaaa-aaaba-cai?limit=2
         "amount": "1000000000"
       },
       "index": 1023
+    }
+  ],
+  "error": null
+}
+```
+
+### 查询特定交易详情
+
+```
+GET /api/transaction/1024
+```
+
+响应:
+
+```json
+{
+  "success": true,
+  "data": {
+    "kind": "transfer",
+    "timestamp": 1677721600000000000,
+    "transfer": {
+      "from": {"owner": "ryjl3-tyaaa-aaaaa-aaaba-cai"},
+      "to": {"owner": "bbbb5-xxxxx"},
+      "amount": "50000000"
+    },
+    "index": 1024
+  },
+  "error": null
+}
+```
+
+### 获取最新交易
+
+```
+GET /api/latest_transactions?limit=3&skip=0
+```
+
+响应:
+
+```json
+{
+  "success": true,
+  "data": [
+    {
+      "kind": "transfer",
+      "timestamp": 1677721700000000000,
+      "transfer": {...},
+      "index": 1030
+    },
+    {
+      "kind": "mint",
+      "timestamp": 1677721650000000000,
+      "mint": {...},
+      "index": 1029
+    },
+    {
+      "kind": "burn",
+      "timestamp": 1677721600000000000,
+      "burn": {
+        "from": {"owner": "cccc6-xxxxx"},
+        "amount": "1000000"
+      },
+      "index": 1028
+    }
+  ],
+  "error": null
+}
+```
+
+### 获取交易总数
+
+```
+GET /api/tx_count
+```
+
+响应:
+
+```json
+{
+  "success": true,
+  "data": 2048,
+  "error": null
+}
+```
+
+### 获取账户总数
+
+```
+GET /api/account_count
+```
+
+响应:
+
+```json
+{
+  "success": true,
+  "data": 512,
+  "error": null
+}
+```
+
+### 获取代币总供应量
+
+```
+GET /api/total_supply
+```
+
+响应:
+
+```json
+{
+  "success": true,
+  "data": "1000000000000",
+  "error": null
+}
+```
+
+### 获取所有账户列表
+
+```
+GET /api/accounts?limit=2&skip=0
+```
+
+响应:
+
+```json
+{
+  "success": true,
+  "data": [
+    "ryjl3-tyaaa-aaaaa-aaaba-cai",
+    "aaaaa-aa"
+  ],
+  "error": null
+}
+```
+
+### 获取活跃账户列表
+
+```
+GET /api/active_accounts?limit=2&skip=0
+```
+
+响应:
+
+```json
+{
+  "success": true,
+  "data": [
+    "ryjl3-tyaaa-aaaaa-aaaba-cai",
+    "bbbb5-xxxxx"
+  ],
+  "error": null
+}
+```
+
+### 高级搜索交易
+
+```
+POST /api/search
+Content-Type: application/json
+
+{
+  "from": "ryjl3-tyaaa-aaaaa-aaaba-cai",
+  "kind": "transfer"
+}
+```
+
+响应:
+
+```json
+{
+  "success": true,
+  "data": [
+    {
+      "kind": "transfer",
+      "timestamp": 1677721600000000000,
+      "transfer": {
+        "from": {"owner": "ryjl3-tyaaa-aaaaa-aaaba-cai"},
+        "to": {"owner": "aaaaa-aa"},
+        "amount": "100000000"
+      },
+      "index": 1024
+    },
+    {
+      "kind": "transfer",
+      "timestamp": 1677721580000000000,
+      "transfer": {
+        "from": {"owner": "ryjl3-tyaaa-aaaaa-aaaba-cai"},
+        "to": {"owner": "bbbb5-xxxxx"},
+        "amount": "20000000"
+      },
+      "index": 1022
     }
   ],
   "error": null
