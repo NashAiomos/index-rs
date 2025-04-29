@@ -89,8 +89,10 @@ pub async fn fetch_archive_transactions(
                     debug!("成功解码为SimpleTransactionRange，交易数量: {}", tx_count);
                     
                     // 输出精简信息到命令行
-                    let end = start + tx_count as u64 - 1;
-                    info!("成功获取到归档交易批次：{}-{}，使用SimpleTransactionRange解码，已保存到数据库", start, end);
+                    if tx_count > 0 {
+                        let end = start + tx_count as u64 - 1;
+                        info!("成功获取到归档交易批次：{}-{}，使用SimpleTransactionRange解码，已保存到数据库", start, end);
+                    }
                     
                     // 给交易添加索引信息
                     let mut indexed_transactions = Vec::new();
@@ -110,8 +112,10 @@ pub async fn fetch_archive_transactions(
                     debug!("成功解码为TransactionList，交易数量: {}", tx_count);
                     
                     // 输出精简信息到命令行
-                    let end = start + tx_count as u64 - 1;
-                    info!("成功获取到归档交易批次：{}-{}，使用TransactionList解码，已保存到数据库", start, end);
+                    if tx_count > 0 {
+                        let end = start + tx_count as u64 - 1;
+                        info!("成功获取到归档交易批次：{}-{}，使用TransactionList解码，已保存到数据库", start, end);
+                    }
                     
                     // 给交易添加索引信息
                     let mut indexed_transactions = Vec::new();
@@ -131,8 +135,10 @@ pub async fn fetch_archive_transactions(
                     debug!("成功解码为Vec<Transaction>，交易数量: {}", tx_count);
                     
                     // 输出精简信息到命令行
-                    let end = start + tx_count as u64 - 1;
-                    info!("成功获取到归档交易批次：{}-{}，使用Vec<Transaction>解码，已保存到数据库", start, end);
+                    if tx_count > 0 {
+                        let end = start + tx_count as u64 - 1;
+                        info!("成功获取到归档交易批次：{}-{}，使用Vec<Transaction>解码，已保存到数据库", start, end);
+                    }
                     
                     // 给交易添加索引信息
                     let mut indexed_transactions = Vec::new();
@@ -366,5 +372,127 @@ pub async fn get_first_transaction_index(
     
     warn!("无法获取区块链初始索引，将使用默认值0");
     Err(create_error(&last_error.unwrap_or_else(|| "尝试获取区块链初始索引失败，达到最大重试次数".to_string())))
+}
+
+/// 测试归档canister可用性，不记录普通交易日志
+pub async fn test_archive_transactions(
+    agent: &Agent,
+    archive_canister_id: &Principal,
+    start: u64,
+    length: u64,
+) -> Result<Vec<Transaction>, Box<dyn Error>> {
+    debug!("测试归档canister可用性: start={}, length={}", start, length);
+    
+    if length == 0 {
+        debug!("请求长度为0，返回空交易列表");
+        return Ok(Vec::new());
+    }
+    
+    let arg = GetTransactionsArg {
+        start: candid::Nat::from(start),
+        length: candid::Nat::from(length),
+    };
+    
+    let arg_bytes = match Encode!(&arg) {
+        Ok(bytes) => bytes,
+        Err(e) => {
+            error!("编码参数失败: {}", e);
+            return Err(create_error(&format!("参数编码失败: {}", e)));
+        }
+    };
+    
+    debug!("测试调用归档canister: {}", archive_canister_id);
+    
+    // 添加重试逻辑
+    let max_retries = 3;
+    let mut retry_count = 0;
+    let mut last_error = None;
+    
+    while retry_count < max_retries {
+        match agent.query(archive_canister_id, "get_transactions")
+            .with_arg(arg_bytes.clone())
+            .call()
+            .await {
+            Ok(response) => {
+                debug!("收到归档canister测试响应，长度: {} 字节", response.len());
+                
+                // 尝试多种可能的结构解码方式
+                
+                // 1. 首先尝试解码为SimpleTransactionRange（调整顺序，优先尝试）
+                debug!("尝试解码为SimpleTransactionRange...");
+                if let Ok(range) = Decode!(&response, SimpleTransactionRange) {
+                    let tx_count = range.transactions.len();
+                    debug!("测试成功解码为SimpleTransactionRange，交易数量: {}", tx_count);
+                    
+                    // 给交易添加索引信息
+                    let mut indexed_transactions = Vec::new();
+                    for (i, mut tx) in range.transactions.into_iter().enumerate() {
+                        let index = start + i as u64;
+                        tx.index = Some(index);
+                        indexed_transactions.push(tx);
+                    }
+                    
+                    debug!("归档canister测试成功");
+                    return Ok(indexed_transactions);
+                }
+                
+                // 2. 尝试解码为TransactionList(Vec<Transaction>)
+                debug!("尝试解码为TransactionList...");
+                if let Ok(list) = Decode!(&response, TransactionList) {
+                    let tx_count = list.0.len();
+                    debug!("测试成功解码为TransactionList，交易数量: {}", tx_count);
+                    
+                    // 给交易添加索引信息
+                    let mut indexed_transactions = Vec::new();
+                    for (i, mut tx) in list.0.into_iter().enumerate() {
+                        let index = start + i as u64;
+                        tx.index = Some(index);
+                        indexed_transactions.push(tx);
+                    }
+                    
+                    debug!("归档canister测试成功");
+                    return Ok(indexed_transactions);
+                }
+                
+                // 3. 尝试直接解码为Vec<Transaction>
+                debug!("尝试解码为Vec<Transaction>...");
+                if let Ok(transactions) = Decode!(&response, Vec<Transaction>) {
+                    let tx_count = transactions.len();
+                    debug!("测试成功解码为Vec<Transaction>，交易数量: {}", tx_count);
+                    
+                    // 给交易添加索引信息
+                    let mut indexed_transactions = Vec::new();
+                    for (i, mut tx) in transactions.into_iter().enumerate() {
+                        let index = start + i as u64;
+                        tx.index = Some(index);
+                        indexed_transactions.push(tx);
+                    }
+                    
+                    debug!("归档canister测试成功");
+                    return Ok(indexed_transactions);
+                }
+                
+                // 所有解码方法都失败，但API调用成功了，重试可能没用
+                debug!("测试解码失败，返回空交易列表");
+                error!("解码错误：测试归档canister {} 所有解码方式均失败，API调用成功但无法解析响应数据", 
+                      archive_canister_id);
+                return Ok(Vec::new());
+            },
+            Err(e) => {
+                retry_count += 1;
+                last_error = Some(e);
+                let wait_time = Duration::from_secs(2 * retry_count); // 指数退避
+                warn!("网络错误：测试调用归档canister失败 (尝试 {}/{}): {}，等待 {:?} 后重试", 
+                    retry_count, max_retries, last_error.as_ref().unwrap(), wait_time);
+                tokio::time::sleep(wait_time).await;
+            }
+        }
+    }
+    
+    // 如果达到最大重试次数仍然失败
+    error!("网络错误：达到最大重试次数 ({}), 测试调用归档canister {} 失败", 
+          max_retries, archive_canister_id);
+    Err(create_error(&format!("测试调用归档canister失败，已重试 {} 次: {}", 
+            max_retries, last_error.unwrap())))
 }
 

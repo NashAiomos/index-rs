@@ -4,7 +4,7 @@ use ic_agent::export::Principal;
 use tokio::time::Duration;
 use num_traits::ToPrimitive;
 use mongodb::{Collection, bson::Document};
-use crate::blockchain::{fetch_archives, fetch_archive_transactions};
+use crate::blockchain::{fetch_archives, fetch_archive_transactions, test_archive_transactions};
 use crate::db::transactions::save_transaction;
 use crate::db::accounts::save_account_transaction;
 use crate::utils::group_transactions_by_account;
@@ -62,7 +62,7 @@ pub async fn sync_archive_transactions(
         archive_count += 1;
         
         // 先尝试获取1笔交易，测试归档canister是否可用
-        match fetch_archive_transactions(agent, &archive.canister_id, start, 1).await {
+        match test_archive_transactions(agent, &archive.canister_id, start, 1).await {
             Ok(test_txs) => {
                 if test_txs.is_empty() {
                     warn!("测试获取交易失败，归档 {} 可能无法访问，跳过", archive.canister_id);
@@ -185,7 +185,7 @@ async fn process_single_archive(
     let mut synced_transactions = Vec::new();
     
     // 先测试单个交易的解码
-    match fetch_archive_transactions(
+    match test_archive_transactions(
         &agent,
         archive_canister_id,
         block_range_start,
