@@ -26,9 +26,12 @@ src/
 │   ├── transactions.rs  # 交易数据库操作
 │   ├── accounts.rs      # 账户数据库操作
 │   ├── balances.rs      # 余额数据库操作
+│   ├── supply.rs        # 总供应量数据库操作
 │   └── sync_status.rs   # 同步状态数据库操作
 └── sync/                # 同步功能
     ├── mod.rs           # 同步模块入口
+    ├── archive.rs       # 归档历史数据
+    ├── ledger.rs        # 账本处理功能
     └── admin.rs         # 管理员功能（重置等）
 ```
 

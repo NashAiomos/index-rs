@@ -744,4 +744,3 @@ pub fn normalize_account_id(account: &str) -> String {
     // 其他情况，保持原样
     account.to_string()
 }
-
