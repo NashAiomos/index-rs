@@ -156,26 +156,124 @@ cors_enabled = true
 
 ## API接口列表
 
-以下是可用的 API 接口:
+以下所有接口路径均以 `/api` 为前缀，响应均遵循下面的 [API响应格式](#API响应格式)。
 
 ### 账户相关
 
-- `GET /api/balance/{account}` - 查询账户余额
-- `GET /api/transactions/{account}?limit={limit}&skip={skip}` - 查询账户交易历史
-- `GET /api/accounts?limit={limit}&skip={skip}` - 获取所有账户列表
-- `GET /api/active_accounts?limit={limit}&skip={skip}` - 获取活跃账户列表
-- `GET /api/account_count` - 获取账户总数
+#### GET /api/balance/{account}
+- 路径参数：
+  - `account` (String)：账户标识，格式 `owner` 或 `owner:subaccount`
+- 描述：查询指定账户的当前余额，返回字符串形式的余额数值
+- 示例请求：
+  ```
+  GET /api/balance/ryjl3-tyaaa-aaaaa-aaaba-cai
+  ```
+- 示例响应：
+  ```json
+  {
+    "success": true,
+    "data": "1234567890",
+    "error": null
+  }
+  ```
+
+#### GET /api/transactions/{account}
+- 路径参数：
+  - `account` (String)：账户标识
+- 查询参数（可选）：
+  - `limit` (i64)：返回记录数，默认 `50`
+  - `skip` (i64)：跳过前 N 条记录，默认 `0`
+- 描述：分页查询指定账户的交易历史，按交易索引倒序排列
+- 示例请求：
+  ```
+  GET /api/transactions/ryjl3-tyaaa-aaaaa-aaaba-cai?limit=10&skip=0
+  ```
+
+#### GET /api/accounts
+- 查询参数（可选）：
+  - `limit` (i64)：返回最大账户数，默认 `100`
+  - `skip` (i64)：跳过前 N 个账户，默认 `0`
+- 描述：分页获取所有账户列表，按账户字符串正序排列
+- 示例请求：
+  ```
+  GET /api/accounts?limit=20&skip=0
+  ```
+
+#### GET /api/active_accounts
+- 查询参数（可选）：
+  - `limit` (i64)：返回最近活跃账户数，默认 `1000`
+  - `skip` (i64)：跳过前 N 个结果，默认 `0`（目前 `skip` 参数不生效）
+- 描述：获取最近活跃的账户列表，按最新交易时间倒序
+- 示例请求：
+  ```
+  GET /api/active_accounts?limit=20
+  ```
+
+#### GET /api/account_count
+- 描述：获取账户总数
+- 示例请求：
+  ```
+  GET /api/account_count
+  ```
 
 ### 交易相关
 
-- `GET /api/transaction/{index}` - 查询特定交易详情
-- `GET /api/latest_transactions?limit={limit}&skip={skip}` - 获取最新交易
-- `GET /api/tx_count` - 获取交易总数
-- `POST /api/search` - 高级交易搜索（请求体支持 JSON 格式的过滤条件）
+#### GET /api/transaction/{index}
+- 路径参数：
+  - `index` (u64)：交易索引
+- 描述：查询指定索引交易的完整详情
+- 示例请求：
+  ```
+  GET /api/transaction/1024
+  ```
+
+#### GET /api/latest_transactions
+- 查询参数（可选）：
+  - `limit` (i64)：返回最新交易数，默认 `20`
+  - `skip` (i64)：跳过前 N 条交易，默认 `0`（目前 `skip` 参数不生效）
+- 描述：获取按索引倒序排列的最新交易列表
+- 示例请求：
+  ```
+  GET /api/latest_transactions?limit=5
+  ```
+
+#### GET /api/tx_count
+- 描述：获取交易总数
+- 示例请求：
+  ```
+  GET /api/tx_count
+  ```
+
+#### POST /api/search
+- 请求头：
+  - `Content-Type: application/json`
+- 请求体（JSON）：
+  - 任意符合 BSON 格式的查询条件，如：
+    ```json
+    {
+      "kind": "transfer",
+      "timestamp": { "$gte": 1620000000 }
+    }
+    ```
+- 描述：根据条件高级搜索交易，返回匹配结果列表，默认最多 `50` 条
+- 示例请求：
+  ```
+  POST /api/search
+  Content-Type: application/json
+
+  {
+    "kind": "transfer"
+  }
+  ```
 
 ### 代币相关
 
-- `GET /api/total_supply` - 获取代币总供应量
+#### GET /api/total_supply
+- 描述：获取代币总供应量
+- 示例请求：
+  ```
+  GET /api/total_supply
+  ```
 
 ## API响应格式
 
@@ -344,103 +442,6 @@ GET /api/account_count
 {
   "success": true,
   "data": 512,
-  "error": null
-}
-```
-
-### 获取代币总供应量
-
-```
-GET /api/total_supply
-```
-
-响应:
-
-```json
-{
-  "success": true,
-  "data": "1000000000000",
-  "error": null
-}
-```
-
-### 获取所有账户列表
-
-```
-GET /api/accounts?limit=2&skip=0
-```
-
-响应:
-
-```json
-{
-  "success": true,
-  "data": [
-    "ryjl3-tyaaa-aaaaa-aaaba-cai",
-    "aaaaa-aa"
-  ],
-  "error": null
-}
-```
-
-### 获取活跃账户列表
-
-```
-GET /api/active_accounts?limit=2&skip=0
-```
-
-响应:
-
-```json
-{
-  "success": true,
-  "data": [
-    "ryjl3-tyaaa-aaaaa-aaaba-cai",
-    "bbbb5-xxxxx"
-  ],
-  "error": null
-}
-```
-
-### 高级搜索交易
-
-```
-POST /api/search
-Content-Type: application/json
-
-{
-  "from": "ryjl3-tyaaa-aaaaa-aaaba-cai",
-  "kind": "transfer"
-}
-```
-
-响应:
-
-```json
-{
-  "success": true,
-  "data": [
-    {
-      "kind": "transfer",
-      "timestamp": 1677721600000000000,
-      "transfer": {
-        "from": {"owner": "ryjl3-tyaaa-aaaaa-aaaba-cai"},
-        "to": {"owner": "aaaaa-aa"},
-        "amount": "100000000"
-      },
-      "index": 1024
-    },
-    {
-      "kind": "transfer",
-      "timestamp": 1677721580000000000,
-      "transfer": {
-        "from": {"owner": "ryjl3-tyaaa-aaaaa-aaaba-cai"},
-        "to": {"owner": "bbbb5-xxxxx"},
-        "amount": "20000000"
-      },
-      "index": 1022
-    }
-  ],
   "error": null
 }
 ```
