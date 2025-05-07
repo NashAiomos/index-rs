@@ -202,7 +202,6 @@ cors_enabled = true
 #### GET /api/active_accounts
 - 查询参数（可选）：
   - `limit` (i64)：返回最近活跃账户数，默认 `1000`
-  - `skip` (i64)：跳过前 N 个结果，默认 `0`（目前 `skip` 参数不生效）
 - 描述：获取最近活跃的账户列表，按最新交易时间倒序
 - 示例请求：
   ```
@@ -230,7 +229,6 @@ cors_enabled = true
 #### GET /api/latest_transactions
 - 查询参数（可选）：
   - `limit` (i64)：返回最新交易数，默认 `20`
-  - `skip` (i64)：跳过前 N 条交易，默认 `0`（目前 `skip` 参数不生效）
 - 描述：获取按索引倒序排列的最新交易列表
 - 示例请求：
   ```
