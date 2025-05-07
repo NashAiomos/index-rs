@@ -76,9 +76,9 @@ src/
 # MongoDB连接地址
 mongodb_url = "mongodb://localhost:27017"
 # 数据库名称
-database = "token_index"
+database = "ledger"
 # 要索引的账本Canister ID
-ledger_canister_id = "你的Canister ID"
+ledger_canister_id = "Canister ID"
 # IC网络地址
 ic_url = "https://ic0.app"
 # 代币小数位数（可选，如果不设置会自动查询）
