@@ -9,8 +9,119 @@ use crate::blockchain::{get_first_transaction_index, fetch_ledger_transactions};
 use crate::db::transactions::save_transaction;
 use crate::db::accounts::save_account_transaction;
 use crate::db::sync_status::{get_sync_status, set_incremental_mode};
-use crate::utils::group_transactions_by_account;
+use crate::utils::{group_transactions_by_account, format_token_amount};
 use crate::models::{Transaction, BATCH_SIZE};
+
+/// 打印交易详细信息到日志
+fn log_transaction_details(tx: &Transaction) {
+    let index_str = match tx.index {
+        Some(idx) => idx.to_string(),
+        None => "未知".to_string(),
+    };
+    
+    // 将时间戳转换为可读时间格式
+    let timestamp = tx.timestamp;
+    let datetime = chrono::NaiveDateTime::from_timestamp_opt(
+        (timestamp / 1_000_000_000) as i64, 
+        (timestamp % 1_000_000_000) as u32
+    ).unwrap_or_else(|| chrono::NaiveDateTime::from_timestamp_opt(0, 0).unwrap());
+    
+    let time_str = datetime.format("%Y-%m-%d %H:%M:%S").to_string();
+    
+    info!("📝 同步新交易 [索引: {}] [时间: {}] [类型: {}]", index_str, time_str, tx.kind);
+    
+    match tx.kind.as_str() {
+        "transfer" => {
+            if let Some(transfer) = &tx.transfer {
+                info!("   ↪ 转账明细: {} → {}", transfer.from, transfer.to);
+                info!("   ↪ 金额: {}", transfer.amount);
+                if let Some(fee) = &transfer.fee {
+                    info!("   ↪ 手续费: {}", fee);
+                }
+                if let Some(spender) = &transfer.spender {
+                    info!("   ↪ 授权者: {}", spender);
+                }
+                if let Some(memo) = &transfer.memo {
+                    if !memo.is_empty() {
+                        let memo_str = if memo.iter().all(|&b| b.is_ascii() && !b.is_ascii_control()) {
+                            String::from_utf8_lossy(memo).to_string()
+                        } else {
+                            format!("0x{}", hex::encode(memo))
+                        };
+                        info!("   ↪ 备注: {}", memo_str);
+                    }
+                }
+            }
+        },
+        "mint" => {
+            if let Some(mint) = &tx.mint {
+                info!("   ↪ 铸币明细: → {}", mint.to);
+                info!("   ↪ 金额: {}", mint.amount);
+                if let Some(memo) = &mint.memo {
+                    if !memo.is_empty() {
+                        let memo_str = if memo.iter().all(|&b| b.is_ascii() && !b.is_ascii_control()) {
+                            String::from_utf8_lossy(memo).to_string()
+                        } else {
+                            format!("0x{}", hex::encode(memo))
+                        };
+                        info!("   ↪ 备注: {}", memo_str);
+                    }
+                }
+            }
+        },
+        "burn" => {
+            if let Some(burn) = &tx.burn {
+                info!("   ↪ 销毁明细: {} →", burn.from);
+                info!("   ↪ 金额: {}", burn.amount);
+                if let Some(spender) = &burn.spender {
+                    info!("   ↪ 授权者: {}", spender);
+                }
+                if let Some(memo) = &burn.memo {
+                    if !memo.is_empty() {
+                        let memo_str = if memo.iter().all(|&b| b.is_ascii() && !b.is_ascii_control()) {
+                            String::from_utf8_lossy(memo).to_string()
+                        } else {
+                            format!("0x{}", hex::encode(memo))
+                        };
+                        info!("   ↪ 备注: {}", memo_str);
+                    }
+                }
+            }
+        },
+        "approve" => {
+            if let Some(approve) = &tx.approve {
+                info!("   ↪ 授权明细: {} → {}", approve.from, approve.spender);
+                info!("   ↪ 授权额度: {}", approve.amount);
+                if let Some(fee) = &approve.fee {
+                    info!("   ↪ 手续费: {}", fee);
+                }
+                if let Some(expires_at) = approve.expires_at {
+                    let expire_dt = chrono::NaiveDateTime::from_timestamp_opt(
+                        (expires_at / 1_000_000_000) as i64, 
+                        (expires_at % 1_000_000_000) as u32
+                    ).unwrap_or_else(|| chrono::NaiveDateTime::from_timestamp_opt(0, 0).unwrap());
+                    let expire_str = expire_dt.format("%Y-%m-%d %H:%M:%S").to_string();
+                    info!("   ↪ 过期时间: {}", expire_str);
+                }
+                if let Some(memo) = &approve.memo {
+                    if !memo.is_empty() {
+                        let memo_str = if memo.iter().all(|&b| b.is_ascii() && !b.is_ascii_control()) {
+                            String::from_utf8_lossy(memo).to_string()
+                        } else {
+                            format!("0x{}", hex::encode(memo))
+                        };
+                        info!("   ↪ 备注: {}", memo_str);
+                    }
+                }
+            }
+        },
+        _ => {
+            info!("   ↪ 未知交易类型");
+        }
+    }
+    
+    info!("--------------------------------------------------------");
+}
 
 /// 验证同步点附近交易的完整性
 /// 检查上次同步的最新交易和前几笔交易是否存在，如果不存在可能需要从早一点的位置重新同步
@@ -201,6 +312,9 @@ pub async fn sync_ledger_transactions(
     let mut last_status_update_index = latest_index;
     let status_update_frequency: usize = 100;  // 每同步100笔交易更新一次状态
     
+    info!("🚀 开始增量同步交易数据，从索引 {} 开始", current_index);
+    info!("==================================================");
+    
     // 尝试同步交易，每次获取一批
     while retry_count < max_retries && consecutive_empty < max_consecutive_empty {
         let length = BATCH_SIZE;
@@ -257,6 +371,7 @@ pub async fn sync_ledger_transactions(
                 // 获取到新交易，重置计数
                 consecutive_empty = 0;
                 info!("获取到 {} 笔交易", transactions.len());
+                info!("🔄 开始处理交易批次: {}～{}", current_index, current_index + transactions.len() as u64 - 1);
                 
                 // 确保交易按索引排序
                 let mut sorted_transactions = transactions.clone();
@@ -274,6 +389,9 @@ pub async fn sync_ledger_transactions(
                             latest_tx_timestamp = tx.timestamp;
                         }
                     }
+                    
+                    // 保存交易之前打印交易详细信息
+                    log_transaction_details(tx);
                     
                     // 保存交易
                     match save_transaction(tx_col, tx).await {
@@ -303,6 +421,7 @@ pub async fn sync_ledger_transactions(
                 }
                 
                 info!("成功保存 {} 笔交易，失败 {} 笔", success_count, error_count);
+                info!("✅ 交易批次处理完成: {}～{}", current_index, current_index + transactions.len() as u64 - 1);
                 
                 // 不再需要在此处计算余额，由新算法统一计算
                 debug!("跳过余额计算（将使用增量余额计算算法）");
@@ -389,7 +508,8 @@ pub async fn sync_ledger_transactions(
         info!("无新交易，保持同步状态在索引: {}", latest_index);
     }
     
-    info!("交易同步完成，当前索引: {}, 共同步 {} 笔新交易", current_index - 1, all_new_transactions.len());
+    info!("==================================================");
+    info!("🏁 交易同步完成，当前索引: {}, 共同步 {} 笔新交易", current_index - 1, all_new_transactions.len());
     Ok(all_new_transactions)
 }
 
