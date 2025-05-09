@@ -24,6 +24,6 @@ max_files = 5
 # 是否启用API服务器
 enabled = true
 # API服务器端口
-port = 3000
+port = 6017
 # 是否启用CORS支持
 cors_enabled = true
