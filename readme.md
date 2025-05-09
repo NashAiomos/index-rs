@@ -171,7 +171,7 @@ cors_enabled = true
 - 示例响应：
   ```json
   {
-    "success": true,
+    "code": 200,
     "data": "1234567890",
     "error": null
   }
@@ -279,7 +279,7 @@ cors_enabled = true
 
 ```json
 {
-  "success": true,
+  "code": 200,
   "data": { ... },
   "error": null
 }
@@ -289,7 +289,7 @@ cors_enabled = true
 
 ```json
 {
-  "success": false,
+  "code": 400,
   "data": null,
   "error": "错误信息"
 }
@@ -307,7 +307,7 @@ GET /api/balance/ryjl3-tyaaa-aaaaa-aaaba-cai
 
 ```json
 {
-  "success": true,
+  "code": 200,
   "data": "1000000000",
   "error": null
 }
@@ -323,7 +323,7 @@ GET /api/transactions/ryjl3-tyaaa-aaaaa-aaaba-cai?limit=2&skip=0
 
 ```json
 {
-  "success": true,
+  "code": 200,
   "data": [
     {
       "kind": "transfer",
@@ -359,7 +359,7 @@ GET /api/transaction/1024
 
 ```json
 {
-  "success": true,
+  "code": 200,
   "data": {
     "kind": "transfer",
     "timestamp": 1677721600000000000,
@@ -384,7 +384,7 @@ GET /api/latest_transactions?limit=3&skip=0
 
 ```json
 {
-  "success": true,
+  "code": 200,
   "data": [
     {
       "kind": "transfer",
@@ -422,7 +422,7 @@ GET /api/tx_count
 
 ```json
 {
-  "success": true,
+  "code": 200,
   "data": 2048,
   "error": null
 }
@@ -438,7 +438,7 @@ GET /api/account_count
 
 ```json
 {
-  "success": true,
+  "code": 200,
   "data": 512,
   "error": null
 }

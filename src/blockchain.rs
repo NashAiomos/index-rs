@@ -28,7 +28,6 @@ pub async fn fetch_archives(
     
     let archives_result: ArchivesResult = Decode!(&response, ArchivesResult)?;
     
-    // 输出精简信息
     if !archives_result.0.is_empty() {
         info!("发现 {} 个归档 canister，将依次同步", archives_result.0.len());
     } else {
@@ -134,7 +133,6 @@ pub async fn fetch_archive_transactions(
                     let tx_count = transactions.len();
                     debug!("成功解码为Vec<Transaction>，交易数量: {}", tx_count);
                     
-                    // 输出精简信息到命令行
                     if tx_count > 0 {
                         let end = start + tx_count as u64 - 1;
                         info!("成功获取到归档交易批次：{}-{}，使用Vec<Transaction>解码，已保存到数据库", start, end);
@@ -256,7 +254,6 @@ pub async fn fetch_ledger_transactions(
                             debug!("使用SimpleTransactionRange成功解析");
                             let tx_count = range.transactions.len();
                             
-                            // 输出精简信息到命令行
                             if tx_count > 0 {
                                 let end = start + tx_count as u64 - 1;
                                 info!("成功获取到主账本交易批次：{}-{}，使用SimpleTransactionRange解码，已保存到数据库", start, end);

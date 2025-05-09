@@ -100,11 +100,11 @@ pub fn create_agent(ic_url: &str) -> Result<Agent, Box<dyn Error>> {
         .with_url(ic_url)
         .build() {
         Ok(a) => {
-            info!("IC Agent初始化完成，连接到: {}", ic_url);
+            info!("IC网络连接创建成功: {}", ic_url);
             Ok(a)
         },
         Err(e) => {
-            error!("无法初始化IC Agent: {}", e);
+            error!("IC网络连接创建失败: {} - 错误: {}", ic_url, e);
             Err(Box::new(e))
         }
     }
