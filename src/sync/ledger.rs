@@ -9,7 +9,7 @@ use crate::blockchain::{get_first_transaction_index, fetch_ledger_transactions};
 use crate::db::transactions::save_transaction;
 use crate::db::accounts::save_account_transaction;
 use crate::db::sync_status::{get_sync_status, set_incremental_mode};
-use crate::utils::{group_transactions_by_account, format_token_amount};
+use crate::utils::{group_transactions_by_account};
 use crate::models::{Transaction, BATCH_SIZE};
 
 /// 打印交易详细信息到日志
@@ -21,10 +21,10 @@ fn log_transaction_details(tx: &Transaction) {
     
     // 将时间戳转换为可读时间格式
     let timestamp = tx.timestamp;
-    let datetime = chrono::NaiveDateTime::from_timestamp_opt(
+    let datetime = chrono::DateTime::from_timestamp(
         (timestamp / 1_000_000_000) as i64, 
         (timestamp % 1_000_000_000) as u32
-    ).unwrap_or_else(|| chrono::NaiveDateTime::from_timestamp_opt(0, 0).unwrap());
+    ).unwrap_or_else(|| chrono::DateTime::from_timestamp(0, 0).unwrap());
     
     let time_str = datetime.format("%Y-%m-%d %H:%M:%S").to_string();
     
@@ -96,10 +96,10 @@ fn log_transaction_details(tx: &Transaction) {
                     info!("   ↪ 手续费: {}", fee);
                 }
                 if let Some(expires_at) = approve.expires_at {
-                    let expire_dt = chrono::NaiveDateTime::from_timestamp_opt(
+                    let expire_dt = chrono::DateTime::from_timestamp(
                         (expires_at / 1_000_000_000) as i64, 
                         (expires_at % 1_000_000_000) as u32
-                    ).unwrap_or_else(|| chrono::NaiveDateTime::from_timestamp_opt(0, 0).unwrap());
+                    ).unwrap_or_else(|| chrono::DateTime::from_timestamp(0, 0).unwrap());
                     let expire_str = expire_dt.format("%Y-%m-%d %H:%M:%S").to_string();
                     info!("   ↪ 过期时间: {}", expire_str);
                 }
