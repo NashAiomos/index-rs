@@ -1,6 +1,6 @@
 # Blockchain Index API
 
-一个区块链索引服务，用于同步和索引区块链上的交易数据，并提供查询 API 。
+一个区块链索引服务，用于同步和索引区块链上的交易数据，并提供查询 API。支持多代币同时索引与查询。
 
 ## 功能特点
 
@@ -9,6 +9,7 @@
 - 提供 RESTful API 接口查询交易和账户信息
 - 支持增量同步和全量重置
 - 支持归档数据同步
+- 支持多代币同时索引与查询
 
 ## 项目结构
 
@@ -37,12 +38,17 @@ src/
 
 ## 数据库集合
 
-程序维护四个主要集合：
+程序为每个代币维护以下集合，前缀为代币符号（例如：`ICP_transactions`）：
 
 1. **transactions**: 存储所有交易记录
 2. **accounts**: 记录账户与交易的关系
 3. **balances**: 存储每个账户的最新余额信息
-4. **sync_status**: 保存同步状态，支持增量同步
+4. **total_supply**: 记录代币的总供应量
+5. **balance_anomalies**: 记录余额计算过程中的异常情况
+
+此外，系统还维护一个全局集合：
+
+6. **sync_status**: 保存各代币的同步状态，支持增量同步
 
 ## 构建与运行
 
@@ -77,12 +83,26 @@ src/
 mongodb_url = "mongodb://localhost:27017"
 # 数据库名称
 database = "ledger"
-# 要索引的账本Canister ID
-ledger_canister_id = "Canister ID"
 # IC网络地址
 ic_url = "https://ic0.app"
+
+# 代币配置列表
+[[tokens]]
+# 代币标识符 (用于在数据库中区分不同代币)
+symbol = "ICP"
+# 代币名称
+name = "Internet Computer"
+# 代币canister_id
+canister_id = "ryjl3-tyaaa-aaaaa-aaaba-cai"
 # 代币小数位数（可选，如果不设置会自动查询）
-token_decimals = 8
+decimals = 8
+
+# 可以添加更多代币配置
+[[tokens]]
+symbol = "LIKE"
+name = "LIKE"
+canister_id = "spdsf-5yaaa-aaaam-adcnq-cai"
+decimals = 6
 
 # 日志配置
 [log]
@@ -104,38 +124,42 @@ max_files = 5
 # 是否启用API服务器
 enabled = true
 # API服务器端口
-port = 3000
+port = 6017
 # 是否启用CORS支持
 cors_enabled = true
 ```
 
 ## 功能特性
 
-1. **代币小数位自动识别**
+1. **多代币支持**
+
+   可同时索引和查询多个代币的交易和账户数据，每个代币使用独立的数据库集合。
+
+2. **代币小数位自动识别**
    
    程序会自动查询账本 Canister 的 `icrc1_decimals` 方法，获取代币小数位，使余额显示更准确。
 
-2. **归档同步**
+3. **归档同步**
    
    程序会先从主账本 Canister 获取归档信息，然后顺序处理每个归档 Canister 中的历史交易。
 
-3. **主账本同步**
+4. **主账本同步**
    
    完成归档同步后，从主账本 Canister 获取最新交易，保持数据库与链上状态一致。
 
-4. **实时余额计算**
+5. **实时余额计算**
    
    针对每笔交易，程序会实时更新相关账户的余额状态，支持转账、铸币、销毁和授权等操作。
 
-5. **定时增量同步**
+6. **定时增量同步**
    
    每 5 秒自动检查一次主账本是否有新交易，并同步到数据库中。
 
-6. **同步状态保存**
+7. **同步状态保存**
    
-   程序会保存同步状态，确保重启后能从上次同步点继续，避免重复处理交易。
+   程序为每个代币保存同步状态，确保重启后能从上次同步点继续，避免重复处理交易。
 
-7. **完善的日志记录**
+8. **完善的日志记录**
    
    支持多级别、多目标的日志记录，方便监控和问题排查。控制台仅显示重要信息，详细日志保存到文件。
 
@@ -158,15 +182,67 @@ cors_enabled = true
 
 以下所有接口路径均以 `/api` 为前缀，响应均遵循下面的 [API响应格式](#API响应格式)。
 
+所有接口均支持通过查询参数 `token` 来指定要查询的代币，例如 `?token=VUSD`。如果不指定，则使用配置的第一个代币作为默认值。
+
+### 代币相关
+
+#### GET /api/tokens
+- 描述：获取系统支持的所有代币列表及其详情
+- 响应数据：代币列表，每个代币包含 symbol、name、decimals 和 canister_id 字段
+- 示例请求：
+  ```
+  GET /api/tokens
+  ```
+- 示例响应：
+  ```json
+  {
+    "code": 200,
+    "data": [
+      {
+        "symbol": "ICP",
+        "name": "Internet Computer",
+        "decimals": 8,
+        "canister_id": "ryjl3-tyaaa-aaaaa-aaaba-cai"
+      },
+      {
+        "symbol": "LIKE",
+        "name": "LIKE",
+        "decimals": 6,
+        "canister_id": "spdsf-5yaaa-aaaam-adcnq-cai"
+      }
+    ],
+    "error": null
+  }
+  ```
+
+#### GET /api/total_supply
+- 查询参数（可选）：
+  - `token` (String)：代币符号，默认为配置的第一个代币
+- 描述：获取指定代币的总供应量
+- 示例请求：
+  ```
+  GET /api/total_supply?token=ICP
+  ```
+- 示例响应：
+  ```json
+  {
+    "code": 200,
+    "data": "469213174432378925",
+    "error": null
+  }
+  ```
+
 ### 账户相关
 
 #### GET /api/balance/{account}
 - 路径参数：
   - `account` (String)：账户标识，格式 `owner` 或 `owner:subaccount`
+- 查询参数（可选）：
+  - `token` (String)：代币符号，默认为配置的第一个代币
 - 描述：查询指定账户的当前余额，返回字符串形式的余额数值
 - 示例请求：
   ```
-  GET /api/balance/ryjl3-tyaaa-aaaaa-aaaba-cai
+  GET /api/balance/ryjl3-tyaaa-aaaaa-aaaba-cai?token=ICP
   ```
 - 示例响应：
   ```json
@@ -181,38 +257,43 @@ cors_enabled = true
 - 路径参数：
   - `account` (String)：账户标识
 - 查询参数（可选）：
+  - `token` (String)：代币符号，默认为配置的第一个代币
   - `limit` (i64)：返回记录数，默认 `50`
   - `skip` (i64)：跳过前 N 条记录，默认 `0`
 - 描述：分页查询指定账户的交易历史，按交易索引倒序排列
 - 示例请求：
   ```
-  GET /api/transactions/ryjl3-tyaaa-aaaaa-aaaba-cai?limit=10&skip=0
+  GET /api/transactions/ryjl3-tyaaa-aaaaa-aaaba-cai?limit=10&skip=0&token=ICP
   ```
 
 #### GET /api/accounts
 - 查询参数（可选）：
+  - `token` (String)：代币符号，默认为配置的第一个代币
   - `limit` (i64)：返回最大账户数，默认 `100`
   - `skip` (i64)：跳过前 N 个账户，默认 `0`
 - 描述：分页获取所有账户列表，按账户字符串正序排列
 - 示例请求：
   ```
-  GET /api/accounts?limit=20&skip=0
+  GET /api/accounts?limit=20&skip=0&token=ICP
   ```
 
 #### GET /api/active_accounts
 - 查询参数（可选）：
+  - `token` (String)：代币符号，默认为配置的第一个代币
   - `limit` (i64)：返回最近活跃账户数，默认 `1000`
-- 描述：获取最近活跃的账户列表，按最新交易时间倒序
+- 描述：获取最近交易中活跃的唯一账户列表，按最新交易时间倒序
 - 示例请求：
   ```
-  GET /api/active_accounts?limit=20
+  GET /api/active_accounts?limit=20&token=ICP
   ```
 
 #### GET /api/account_count
-- 描述：获取账户总数
+- 查询参数（可选）：
+  - `token` (String)：代币符号，默认为配置的第一个代币
+- 描述：获取特定代币的账户总数
 - 示例请求：
   ```
-  GET /api/account_count
+  GET /api/account_count?token=ICP
   ```
 
 ### 交易相关
@@ -220,31 +301,40 @@ cors_enabled = true
 #### GET /api/transaction/{index}
 - 路径参数：
   - `index` (u64)：交易索引
+- 查询参数（可选）：
+  - `token` (String)：代币符号，默认为配置的第一个代币
 - 描述：查询指定索引交易的完整详情
 - 示例请求：
   ```
-  GET /api/transaction/1024
+  GET /api/transaction/1024?token=ICP
   ```
 
 #### GET /api/latest_transactions
 - 查询参数（可选）：
+  - `token` (String)：代币符号，默认为配置的第一个代币
   - `limit` (i64)：返回最新交易数，默认 `20`
 - 描述：获取按索引倒序排列的最新交易列表
 - 示例请求：
   ```
-  GET /api/latest_transactions?limit=5
+  GET /api/latest_transactions?limit=5&token=ICP
   ```
 
 #### GET /api/tx_count
-- 描述：获取交易总数
+- 查询参数（可选）：
+  - `token` (String)：代币符号，默认为配置的第一个代币
+- 描述：获取特定代币的交易总数
 - 示例请求：
   ```
-  GET /api/tx_count
+  GET /api/tx_count?token=ICP
   ```
 
 #### POST /api/search
 - 请求头：
   - `Content-Type: application/json`
+- 查询参数（可选）：
+  - `token` (String)：代币符号，默认为配置的第一个代币
+  - `limit` (i64)：返回记录数，默认 `50`
+  - `skip` (i64)：跳过前 N 条记录，默认 `0`
 - 请求体（JSON）：
   - 任意符合 BSON 格式的查询条件，如：
     ```json
@@ -253,24 +343,15 @@ cors_enabled = true
       "timestamp": { "$gte": 1620000000 }
     }
     ```
-- 描述：根据条件高级搜索交易，返回匹配结果列表，默认最多 `50` 条
+- 描述：根据条件高级搜索交易，返回匹配结果列表
 - 示例请求：
   ```
-  POST /api/search
+  POST /api/search?token=ICP&limit=20
   Content-Type: application/json
 
   {
     "kind": "transfer"
   }
-  ```
-
-### 代币相关
-
-#### GET /api/total_supply
-- 描述：获取代币总供应量
-- 示例请求：
-  ```
-  GET /api/total_supply
   ```
 
 ## API响应格式
