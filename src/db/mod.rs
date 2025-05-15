@@ -1,10 +1,12 @@
 use std::error::Error;
 use std::sync::Arc;
+use std::collections::HashMap;
 use mongodb::{Client, Collection, Database};
 use mongodb::bson::Document;
 use mongodb::options::{ClientOptions, ResolverConfig};
 use log::{info, error};
 use tokio::sync::Semaphore;
+use crate::models::TokenConfig;
 
 pub mod transactions;
 pub mod accounts;
@@ -17,18 +19,26 @@ pub mod supply;
 pub struct DbConnection {
     #[allow(dead_code)]
     pub db: Database,
-    pub tx_col: Collection<Document>,
-    pub accounts_col: Collection<Document>,
-    pub balances_col: Collection<Document>,
-    pub total_supply_col: Collection<Document>,
+    pub collections: HashMap<String, TokenCollections>,
     pub sync_status_col: Collection<Document>,
-    pub balance_anomalies_col: Collection<Document>,
     #[allow(dead_code)]
     pub db_semaphore: Arc<Semaphore>,
 }
 
+#[derive(Clone)]
+/// 单个代币的所有集合
+pub struct TokenCollections {
+    #[allow(dead_code)]
+    pub symbol: String,
+    pub tx_col: Collection<Document>,
+    pub accounts_col: Collection<Document>,
+    pub balances_col: Collection<Document>,
+    pub total_supply_col: Collection<Document>,
+    pub balance_anomalies_col: Collection<Document>,
+}
+
 /// 初始化MongoDB连接
-pub async fn init_db(mongodb_url: &str, database_name: &str) -> Result<DbConnection, Box<dyn Error>> {
+pub async fn init_db(mongodb_url: &str, database_name: &str, tokens: &[TokenConfig]) -> Result<DbConnection, Box<dyn Error>> {
     info!("初始化MongoDB连接: {}", mongodb_url);
     
     let options = ClientOptions::parse_with_resolver_config(mongodb_url, ResolverConfig::cloudflare()).await?;
@@ -43,23 +53,37 @@ pub async fn init_db(mongodb_url: &str, database_name: &str) -> Result<DbConnect
     info!("已连接到MongoDB");
     
     let db = mongo_client.database(database_name);
-    let accounts_col: Collection<Document> = db.collection("accounts");
-    let tx_col: Collection<Document> = db.collection("transactions");
-    let balances_col: Collection<Document> = db.collection("balances");
-    let total_supply_col: Collection<Document> = db.collection("total_supply");
     let sync_status_col: Collection<Document> = db.collection("sync_status");
-    let balance_anomalies_col: Collection<Document> = db.collection("balance_anomalies");
-    
     let db_semaphore = Arc::new(Semaphore::new(30));
+    
+    // 为每个代币创建集合
+    let mut collections = HashMap::new();
+    for token in tokens {
+        info!("为代币 {} ({}) 创建集合", token.name, token.symbol);
+        
+        let prefix = token.symbol.to_lowercase();
+        let tx_col: Collection<Document> = db.collection(&format!("{}_transactions", prefix));
+        let accounts_col: Collection<Document> = db.collection(&format!("{}_accounts", prefix));
+        let balances_col: Collection<Document> = db.collection(&format!("{}_balances", prefix));
+        let total_supply_col: Collection<Document> = db.collection(&format!("{}_total_supply", prefix));
+        let balance_anomalies_col: Collection<Document> = db.collection(&format!("{}_balance_anomalies", prefix));
+        
+        let token_collections = TokenCollections {
+            symbol: token.symbol.clone(),
+            tx_col,
+            accounts_col,
+            balances_col,
+            total_supply_col,
+            balance_anomalies_col,
+        };
+        
+        collections.insert(token.symbol.clone(), token_collections);
+    }
     
     Ok(DbConnection {
         db,
-        tx_col,
-        accounts_col,
-        balances_col,
-        total_supply_col,
+        collections,
         sync_status_col,
-        balance_anomalies_col,
         db_semaphore,
     })
 }
@@ -68,45 +92,50 @@ pub async fn init_db(mongodb_url: &str, database_name: &str) -> Result<DbConnect
 pub async fn create_indexes(conn: &DbConnection) -> Result<(), Box<dyn Error>> {
     info!("创建或确认数据库索引...");
     
-    // 交易索引
-    match conn.tx_col.create_index(
-        mongodb::IndexModel::builder()
-            .keys(mongodb::bson::doc! { "index": 1 })
-            .options(mongodb::options::IndexOptions::builder().unique(true).build())
-            .build(),
-        None
-    ).await {
-        Ok(_) => info!("交易索引创建成功"),
-        Err(e) => error!("交易索引创建失败: {}", e)
-    }
-    
-    // 账户索引
-    match conn.accounts_col.create_index(
-        mongodb::IndexModel::builder()
-            .keys(mongodb::bson::doc! { "account": 1 })
-            .build(),
-        None
-    ).await {
-        Ok(_) => info!("账户索引创建成功"),
-        Err(e) => error!("账户索引创建失败: {}", e)
-    }
-    
-    // 余额索引
-    match conn.balances_col.create_index(
-        mongodb::IndexModel::builder()
-            .keys(mongodb::bson::doc! { "account": 1 })
-            .options(mongodb::options::IndexOptions::builder().unique(true).build())
-            .build(),
-        None
-    ).await {
-        Ok(_) => info!("余额索引创建成功"),
-        Err(e) => error!("余额索引创建失败: {}", e)
+    // 为每个代币创建索引
+    for (symbol, collections) in &conn.collections {
+        info!("为代币 {} 创建索引", symbol);
+        
+        // 交易索引
+        match collections.tx_col.create_index(
+            mongodb::IndexModel::builder()
+                .keys(mongodb::bson::doc! { "index": 1 })
+                .options(mongodb::options::IndexOptions::builder().unique(true).build())
+                .build(),
+            None
+        ).await {
+            Ok(_) => info!("{}: 交易索引创建成功", symbol),
+            Err(e) => error!("{}: 交易索引创建失败: {}", symbol, e)
+        }
+        
+        // 账户索引
+        match collections.accounts_col.create_index(
+            mongodb::IndexModel::builder()
+                .keys(mongodb::bson::doc! { "account": 1 })
+                .build(),
+            None
+        ).await {
+            Ok(_) => info!("{}: 账户索引创建成功", symbol),
+            Err(e) => error!("{}: 账户索引创建失败: {}", symbol, e)
+        }
+        
+        // 余额索引
+        match collections.balances_col.create_index(
+            mongodb::IndexModel::builder()
+                .keys(mongodb::bson::doc! { "account": 1 })
+                .options(mongodb::options::IndexOptions::builder().unique(true).build())
+                .build(),
+            None
+        ).await {
+            Ok(_) => info!("{}: 余额索引创建成功", symbol),
+            Err(e) => error!("{}: 余额索引创建失败: {}", symbol, e)
+        }
     }
     
     // 同步状态索引
     match conn.sync_status_col.create_index(
         mongodb::IndexModel::builder()
-            .keys(mongodb::bson::doc! { "status_type": 1 })
+            .keys(mongodb::bson::doc! { "status_type": 1, "token": 1 })
             .options(mongodb::options::IndexOptions::builder().unique(true).build())
             .build(),
         None

@@ -8,10 +8,12 @@ mod api;
 mod api_server;
 
 use std::error::Error;
+use std::collections::HashMap;
 use std::fs;
-use tokio::time::interval;
+use tokio;
 use tokio::time::Duration;
 use log::{info, error, warn, debug, LevelFilter};
+use crate::db::balances;
 use log4rs::append::console::{ConsoleAppender, Target};
 use log4rs::append::file::FileAppender;
 use log4rs::encode::pattern::PatternEncoder;
@@ -20,7 +22,7 @@ use log4rs::filter::threshold::ThresholdFilter;
 use crate::config::{load_config, parse_args, parse_canister_id, create_agent, get_token_decimals};
 use crate::db::{init_db, create_indexes};
 use crate::sync::{sync_ledger_transactions, sync_archive_transactions};
-use crate::sync::admin::{reset_and_sync_all_transactions, calculate_all_balances};
+use crate::sync::admin::reset_and_sync_all_transactions;
 use crate::db::balances::calculate_incremental_balances;
 use crate::db::sync_status::{get_sync_status, set_incremental_mode};
 use crate::db::transactions::get_latest_transaction_index;
@@ -212,165 +214,242 @@ async fn run_application(cfg: models::Config) -> Result<(), Box<dyn Error>> {
     let reset_mode = args.reset;
     
     // 初始化 MongoDB
-    let db_conn = init_db(&cfg.mongodb_url, &cfg.database).await?;
+    let db_conn = init_db(&cfg.mongodb_url, &cfg.database, &cfg.tokens).await?;
     
     // 初始化IC Agent
     let agent = create_agent(&cfg.ic_url)?;
 
-    // 解析Canister ID
-    let canister_id = parse_canister_id(&cfg.ledger_canister_id)?;
-    
-    // 获取代币小数位数
-    let token_decimals = match cfg.token_decimals {
-        Some(decimals) => {
-            info!("使用配置文件中指定的代币小数位: {}", decimals);
-            decimals
-        },
-        None => {
-            // 尝试从canister查询小数位数
-            match get_token_decimals(&agent, &canister_id).await {
-                Ok(decimals) => {
-                    info!("从canister查询到代币小数位: {}", decimals);
-                    decimals
-                },
-        Err(e) => {
-                    warn!("查询代币小数位失败: {}, 使用默认值{}", e, models::DEFAULT_DECIMALS);
-                    models::DEFAULT_DECIMALS
-                }
-            }
+    // 获取并验证所有代币的canister ID和小数位数
+    for token in &cfg.tokens {
+        // 解析Canister ID
+        info!("{}: 解析canister ID: {}", token.symbol, token.canister_id);
+        let _canister_id = parse_canister_id(&token.canister_id)?;
+        
+        // 获取代币小数位数 (如果未在配置中指定)
+        if token.decimals.is_none() {
+            // 仅显示信息，不执行查询，查询将在实际同步时进行
+            info!("{}: 配置中未指定代币小数位，将在同步时从canister查询", token.symbol);
+        } else {
+            info!("{}: 使用配置文件中指定的代币小数位: {}", token.symbol, token.decimals.unwrap());
         }
-    };
-    info!("代币小数位设置为: {}", token_decimals);
+    }
 
     // 创建索引以提高查询性能
     create_indexes(&db_conn).await?;
 
     // 如果是重置模式，执行完整的数据库重置和重新同步
-    if reset_mode {
+    if reset_mode && !cfg.tokens.is_empty() {
         info!("开始执行数据库重置和重新同步操作...");
-        reset_and_sync_all_transactions(&agent, &canister_id, &db_conn, token_decimals).await?;
+        // 单例模式：只有一个代币时，直接重置和同步
+        let first_token = &cfg.tokens[0];
+        // 解析canister ID
+        let canister_id = parse_canister_id(&first_token.canister_id)?;
+        reset_and_sync_all_transactions(&agent, &canister_id, &db_conn, first_token).await?;
         info!("数据库重置和重新同步成功完成！");
         return Ok(());
     }
     
-    // 检查同步状态，确定是否需要初始同步
-    let sync_status = get_sync_status(&db_conn.sync_status_col).await;
-    let needs_initial_sync = match &sync_status {
-        Ok(Some(status)) => {
-            if status.sync_mode == "incremental" && status.last_synced_index > 0 {
-                info!("检测到有效的同步状态，上次同步索引：{}，上次同步时间：{}，将继续增量同步", 
-                      status.last_synced_index, 
-                      chrono::DateTime::from_timestamp(status.updated_at, 0)
-                         .unwrap_or_else(|| chrono::Utc::now())
-                         .format("%Y-%m-%d %H:%M:%S"));
-                false
-            } else {
-                info!("同步状态无效或为全量模式，需要进行初始同步");
-                true
-            }
-        },
-        _ => {
-            info!("未找到同步状态记录，将进行初始同步");
-            true
-        }
-    };
-    
-    // 如果需要初始同步，执行全量同步流程
-    if needs_initial_sync {
-        // 正常模式：先同步所有交易，再统一计算余额
-        info!("阶段1：同步所有交易数据...");
-        
-        // 先同步归档数据
-        let _archives_result = sync_archive_transactions(
-            &agent,
-            &canister_id,
-            &db_conn.tx_col,
-            &db_conn.accounts_col,
-            &db_conn.balances_col,
-            &db_conn.total_supply_col,
-            token_decimals,
-            false // 不计算余额
-        ).await?;
-        
-        // 同步主账本数据
-        info!("开始同步ledger交易...");
-        let ledger_txs = if let Ok(txs) = sync_ledger_transactions(
-            &agent,
-            &canister_id,
-            &db_conn.tx_col,
-            &db_conn.accounts_col,
-            &db_conn.balances_col,
-            &db_conn.total_supply_col,
-            token_decimals,
-            false // 不计算余额
-        ).await {
-            txs
-        } else {
-            error!("同步ledger交易时发生错误，继续执行后续逻辑");
-            Vec::new()
-        };
-        
-        // 阶段2：根据账户交易记录计算余额
-        info!("阶段2：根据账户交易记录统一计算余额...");
-        calculate_all_balances(&db_conn, token_decimals).await?;
-        
-        // 设置增量同步模式
-        if !ledger_txs.is_empty() {
-            if let Some(last_tx) = ledger_txs.last() {
-                if let Some(index) = last_tx.index {
-                    info!("设置增量同步起点为最后一笔交易索引: {}", index);
-                    set_incremental_mode(
-                        &db_conn.sync_status_col,
-                        index,
-                        last_tx.timestamp
-                    ).await?;
+    // 根据重置模式确定同步策略
+    if reset_mode {
+        info!("重置模式已启用，将对所有代币进行全量同步");
+        // 重置模式下，对所有代币进行全量同步
+        for token in &cfg.tokens {
+            info!("开始代币 {} 的数据库重置和重新同步操作...", token.symbol);
+            
+            // 获取该代币的集合
+            let _collections = match db_conn.collections.get(&token.symbol) {
+                Some(cols) => cols,
+                None => {
+                    error!("没有找到代币 {} 的集合", token.symbol);
+                    continue;
+                }
+            };
+            
+            // 从canister_id获取 Principal
+            let canister_id = match parse_canister_id(&token.canister_id) {
+                Ok(id) => id,
+                Err(e) => {
+                    error!("{}: 解析canister ID失败: {}", token.symbol, e);
+                    continue;
+                }
+            };
+            
+            // 调用reset_and_sync_all_transactions函数同步该代币的所有交易
+            match reset_and_sync_all_transactions(&agent, &canister_id, &db_conn, &token).await {
+                Ok(_) => {
+                    info!("{}: 重置和同步运行成功", token.symbol);
+                },
+                Err(e) => {
+                    error!("{}: 重置和同步失败: {}", token.symbol, e);
                 }
             }
         }
-        
-        info!("初始同步和余额计算完成，将开始实时监控新交易");
-    } else if let Ok(Some(status)) = sync_status {
-        // 检查是否需要验证同步状态的完整性
-        info!("从断点继续同步，验证同步状态的完整性...");
-        
-        // 检查数据库中最新交易索引与同步状态是否一致
-        match get_latest_transaction_index(&db_conn.tx_col).await {
-            Ok(Some(db_latest_index)) => {
-                if db_latest_index < status.last_synced_index {
-                    warn!("数据库最新交易索引 ({}) 小于同步状态记录的索引 ({}), 可能有数据丢失", 
-                         db_latest_index, status.last_synced_index);
-                    info!("将从数据库最新索引开始重新同步...");
-                    
-                    // 更新同步状态为数据库的最新索引
-                    if let Err(e) = set_incremental_mode(
-                        &db_conn.sync_status_col,
-                        db_latest_index,
-                        status.last_synced_timestamp
-                    ).await {
-                        error!("更新同步状态失败: {}", e);
-                    }
-                } else if db_latest_index > status.last_synced_index {
-                    info!("数据库最新交易索引 ({}) 大于同步状态记录的索引 ({}), 将更新同步状态", 
-                          db_latest_index, status.last_synced_index);
-                    
-                    // 更新同步状态为数据库的最新索引
-                    if let Err(e) = set_incremental_mode(
-                        &db_conn.sync_status_col,
-                        db_latest_index,
-                        status.last_synced_timestamp
-                    ).await {
-                        error!("更新同步状态失败: {}", e);
-                    }
+        return Ok(());
+    }
+    
+    // 判断每个代币是否需要初始同步
+    let mut tokens_sync_status = HashMap::new();
+    for token in &cfg.tokens {
+        let sync_status = get_sync_status(&db_conn.sync_status_col, &token.symbol).await;
+        let needs_initial_sync = match &sync_status {
+            Ok(Some(status)) => {
+                if status.sync_mode == "incremental" && status.last_synced_index > 0 {
+                    info!("{}: 检测到有效的同步状态，上次同步索引：{}，上次同步时间：{}，将继续增量同步", 
+                          token.symbol, status.last_synced_index, 
+                          chrono::DateTime::from_timestamp(status.updated_at, 0)
+                             .unwrap_or_else(|| chrono::Utc::now())
+                             .format("%Y-%m-%d %H:%M:%S"));
+                    false
                 } else {
-                    info!("同步状态与数据库记录一致，索引: {}", db_latest_index);
+                    info!("{}: 同步状态无效或为全量模式，需要进行初始同步", token.symbol);
+                    true
                 }
             },
             _ => {
-                warn!("无法获取数据库最新交易索引，将使用同步状态记录的索引");
+                info!("{}: 未找到同步状态记录，将进行初始同步", token.symbol);
+                true
             }
-        }
+        };
+        tokens_sync_status.insert(token.symbol.clone(), (sync_status, needs_initial_sync));
+    }
+    
+    // 为需要初始同步的代币执行全量同步流程
+    for token in &cfg.tokens {
+        let (sync_status, needs_initial_sync) = match tokens_sync_status.get(&token.symbol) {
+            Some(status) => status,
+            None => {
+                error!("{}: 缺失同步状态信息", token.symbol);
+                continue;
+            }
+        };
         
-        info!("跳过初始同步，直接进入增量同步模式");
+        // 获取该代币的集合
+        let collections = match db_conn.collections.get(&token.symbol) {
+            Some(cols) => cols,
+            None => {
+                error!("{}: 没有找到代币的集合", token.symbol);
+                continue;
+            }
+        };
+        
+        // 解析Canister ID
+        let canister_id = parse_canister_id(&token.canister_id)?;
+        
+        // 获取代币小数位数
+        let token_decimals = match token.decimals {
+            Some(decimals) => decimals,
+            None => get_token_decimals(&agent, &canister_id, &token.symbol).await?
+        };
+        
+        if *needs_initial_sync {
+            // 正常模式：先同步所有交易，再统一计算余额
+            info!("{}: 阶段1：同步所有交易数据...", token.symbol);
+            
+            // 先同步归档数据
+            let _archives_result = sync_archive_transactions(
+                &agent,
+                &canister_id,
+                &collections.tx_col,
+                &collections.accounts_col,
+                &collections.balances_col,
+                &collections.total_supply_col,
+                token_decimals,
+                false // 不计算余额
+            ).await?;
+            
+            // 同步主账本数据
+            info!("{}: 开始同步ledger交易...", token.symbol);
+            let ledger_txs = if let Ok(txs) = sync_ledger_transactions(
+                &agent,
+                &canister_id,
+                &collections.tx_col,
+                &collections.accounts_col,
+                &collections.balances_col,
+                &collections.total_supply_col,
+                &token,
+                false // 不计算余额
+            ).await {
+                txs
+            } else {
+                error!("{}: 同步ledger交易时发生错误，继续执行后续逻辑", token.symbol);
+                Vec::new()
+            };
+            
+            // 阶段2：根据账户交易记录计算余额
+            info!("{}: 阶段2：根据账户交易记录统一计算余额...", token.symbol);
+            // 调用余额计算函数，传递代币配置
+            if let Err(e) = balances::calculate_all_balances(
+                &collections.accounts_col,
+                &collections.tx_col,
+                &collections.balances_col,
+                &collections.total_supply_col,
+                &collections.balance_anomalies_col,
+                &token
+            ).await {
+                error!("{}: 计算余额时出错: {}", token.symbol, e);
+            }
+            
+            // 设置增量同步模式
+            if !ledger_txs.is_empty() {
+                if let Some(last_tx) = ledger_txs.last() {
+                    if let Some(index) = last_tx.index {
+                        info!("{}: 设置增量同步起点为最后一笔交易索引: {}", token.symbol, index);
+                        set_incremental_mode(
+                            &db_conn.sync_status_col,
+                            &token.symbol,
+                            index,
+                            last_tx.timestamp
+                        ).await?;
+                    }
+                }
+            }
+            
+            info!("{}: 初始同步和余额计算完成", token.symbol);
+        } else if let Ok(Some(status)) = sync_status {
+            // 检查是否需要验证同步状态的完整性
+            info!("{}: 从断点继续同步，验证同步状态的完整性...", token.symbol);
+            
+            // 检查数据库中最新交易索引与同步状态是否一致
+            match get_latest_transaction_index(&collections.tx_col).await {
+                Ok(Some(db_latest_index)) => {
+                    if db_latest_index < status.last_synced_index {
+                        warn!("{}: 数据库最新交易索引 ({}) 小于同步状态记录的索引 ({}), 可能有数据丢失", 
+                             token.symbol, db_latest_index, status.last_synced_index);
+                        info!("{}: 将从数据库最新索引开始重新同步...", token.symbol);
+                        
+                        // 更新同步状态为数据库的最新索引
+                        if let Err(e) = set_incremental_mode(
+                            &db_conn.sync_status_col,
+                            &token.symbol,
+                            db_latest_index,
+                            status.last_synced_timestamp
+                        ).await {
+                            error!("{}: 更新同步状态失败: {}", token.symbol, e);
+                        }
+                    } else if db_latest_index > status.last_synced_index {
+                        info!("{}: 数据库最新交易索引 ({}) 大于同步状态记录的索引 ({}), 将更新同步状态", 
+                              token.symbol, db_latest_index, status.last_synced_index);
+                        
+                        // 更新同步状态为数据库的最新索引
+                        if let Err(e) = set_incremental_mode(
+                            &db_conn.sync_status_col,
+                            &token.symbol,
+                            db_latest_index,
+                            status.last_synced_timestamp
+                        ).await {
+                            error!("{}: 更新同步状态失败: {}", token.symbol, e);
+                        }
+                    } else {
+                        info!("{}: 同步状态与数据库记录一致，索引: {}", token.symbol, db_latest_index);
+                    }
+                },
+                _ => {
+                    warn!("{}: 无法获取数据库最新交易索引，将使用同步状态记录的索引", token.symbol);
+                }
+            }
+            
+            info!("{}: 跳过初始同步，直接进入增量同步模式", token.symbol);
+        }
     }
     
     // 启动API服务器（如果配置中启用）
@@ -380,10 +459,11 @@ async fn run_application(cfg: models::Config) -> Result<(), Box<dyn Error>> {
             // 克隆数据库连接和端口到新的变量，避免借用 cfg
             let db_conn_clone = db_conn.clone();
             let port = api_config.port;
+            let tokens_clone = cfg.tokens.clone();
 
             // 创建异步任务启动API服务器
             tokio::spawn(async move {
-                let api_server = api_server::ApiServer::new(db_conn_clone, token_decimals);
+                let api_server = api_server::ApiServer::new(db_conn_clone, tokens_clone);
                 if let Err(e) = api_server.start(port).await {
                     log::error!("API服务器启动失败: {}", e);
                 }
@@ -398,63 +478,118 @@ async fn run_application(cfg: models::Config) -> Result<(), Box<dyn Error>> {
     }
     
     // 定时增量同步
-    info!("开始实时监控新交易");
-    let mut interval = interval(Duration::from_secs(5));
-    let mut consecutive_errors = 0;
+    info!("开始实时监控多代币的新交易");
+    let mut consecutive_errors = HashMap::new();
     let max_consecutive_errors = 5;
+    let token_rotation_delay = Duration::from_secs(2); // 不同代币同步间隔
+    
+    // 当没有代币时直接返回
+    if cfg.tokens.is_empty() {
+        error!("没有配置代币，结束同步");
+        return Ok(());
+    }
+    
+    // 初始化每个代币的错误计数
+    for token in &cfg.tokens {
+        consecutive_errors.insert(token.symbol.clone(), 0);
+    }
+    
+    // 创建代币列表循环器
+    let tokens_cycle = std::iter::repeat(cfg.tokens.clone()).flatten();
+    let mut token_iter = tokens_cycle.enumerate();
     
     loop {
-        interval.tick().await;
+        // 获取当前要同步的代币
+        let (index, token) = token_iter.next().unwrap();
         
-        debug!("执行定时增量同步...");
+        // 如果不是第一个代币，等待2秒再同步
+        if index > 0 {
+            tokio::time::sleep(token_rotation_delay).await;
+        }
+        
+        debug!("{}: 执行定时增量同步...", token.symbol);
+        
+        // 获取该代币的集合
+        let collections = match db_conn.collections.get(&token.symbol) {
+            Some(cols) => cols,
+            None => {
+                error!("{}: 没有找到代币的集合", token.symbol);
+                continue;
+            }
+        };
+        
+        // 解析Canister ID
+        let canister_id = match parse_canister_id(&token.canister_id) {
+            Ok(id) => id,
+            Err(e) => {
+                error!("{}: 解析canister ID失败: {}", token.symbol, e);
+                continue;
+            }
+        };
+        
+        // 获取代币小数位数
+        let token_decimals = match token.decimals {
+            Some(decimals) => decimals,
+            None => {
+                match get_token_decimals(&agent, &canister_id, &token.symbol).await {
+                    Ok(decimals) => decimals,
+                    Err(e) => {
+                        error!("{}: 获取代币小数位失败: {}", token.symbol, e);
+                        continue;
+                    }
+                }
+            }
+        };
+        
+        // 访问或初始化该代币的连续错误计数
+        let error_count = consecutive_errors.entry(token.symbol.clone()).or_insert(0);
         
         // 增量同步交易数据
         match sync_ledger_transactions(
             &agent, 
             &canister_id, 
-            &db_conn.tx_col, 
-            &db_conn.accounts_col, 
-            &db_conn.balances_col, 
-            &db_conn.total_supply_col,
-            token_decimals,
+            &collections.tx_col, 
+            &collections.accounts_col, 
+            &collections.balances_col, 
+            &collections.total_supply_col,
+            &token,
             false // 增量同步时不再实时计算余额
         ).await {
             Ok(new_transactions) => {
                 // 同步完成后，只计算新交易相关账户的余额
                 if !new_transactions.is_empty() {
-                    info!("增量同步获取到 {} 笔新交易，计算相关账户余额...", new_transactions.len());
+                    info!("{}: 增量同步获取到 {} 笔新交易，计算相关账户余额...", token.symbol, new_transactions.len());
                     match calculate_incremental_balances(
                         &new_transactions,
-                        &db_conn.tx_col,
-                        &db_conn.accounts_col,
-                        &db_conn.balances_col,
-                        &db_conn.total_supply_col,
-                        &db_conn.balance_anomalies_col,
-                        token_decimals
+                        &collections.tx_col,
+                        &collections.accounts_col,
+                        &collections.balances_col,
+                        &collections.total_supply_col,
+                        &collections.balance_anomalies_col,
+                        &token
                     ).await {
                         Ok((success, error)) => {
-                            info!("增量余额计算完成: 更新了 {} 个账户, 失败 {} 个账户", success, error);
-                            consecutive_errors = 0; // 重置错误计数
+                            info!("{}: 增量余额计算完成: 更新了 {} 个账户, 失败 {} 个账户", token.symbol, success, error);
+                            *error_count = 0; // 重置错误计数
                         },
                         Err(e) => {
-                            error!("增量计算余额时出错: {}", e);
-                            consecutive_errors += 1;
+                            error!("{}: 增量计算余额时出错: {}", token.symbol, e);
+                            *error_count += 1;
                         }
                     }
                 } else {
-                    debug!("没有获取到新交易，跳过余额计算");
-                    consecutive_errors = 0; // 重置错误计数
+                    debug!("{}: 没有获取到新交易，跳过余额计算", token.symbol);
+                    *error_count = 0; // 重置错误计数
                 }
             },
             Err(e) => {
-                consecutive_errors += 1;
-                error!("定时增量同步出错 ({}/{}): {}", consecutive_errors, max_consecutive_errors, e);
+                *error_count += 1;
+                error!("{}: 定时增量同步出错 ({}/{}): {}", token.symbol, error_count, max_consecutive_errors, e);
                 
-                if consecutive_errors >= max_consecutive_errors {
-                    error!("连续错误次数达到上限 ({}), 等待更长时间后继续...", max_consecutive_errors);
-                    // 发生多次连续错误时，等待更长时间再重试
-                    tokio::time::sleep(Duration::from_secs(30)).await;
-                    consecutive_errors = 0; // 重置计数
+                if *error_count >= max_consecutive_errors {
+                    error!("{}: 连续错误次数达到上限 ({}), 对该代币等待更长时间后继续...", token.symbol, max_consecutive_errors);
+                    // 发生多次连续错误时，等待更长时间再重试，但继续处理其他代币
+                    *error_count = 0; // 重置计数
                 }
             }
         }

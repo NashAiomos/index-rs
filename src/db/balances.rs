@@ -69,8 +69,11 @@ pub async fn calculate_all_balances(
     balances_col: &Collection<Document>,
     supply_col: &Collection<Document>,
     anomalies_col: &Collection<Document>,
-    token_decimals: u8,
+    token_config: &crate::models::TokenConfig,
 ) -> Result<(u64, u64), Box<dyn Error>> {
+    // 获取代币小数位数，默认为8
+    let token_decimals = token_config.decimals.unwrap_or(8);
+    let token_symbol = &token_config.symbol;
     info!("开始计算所有账户余额...");
     
     // 首先清空余额集合
@@ -123,7 +126,7 @@ pub async fn calculate_all_balances(
         }
         
         // 计算该账户的余额
-        match calculate_account_balance(&account, &tx_indices, tx_col, token_decimals, anomalies_col).await {
+        match calculate_account_balance(&account, &tx_indices, tx_col, token_config, anomalies_col).await {
             Ok((balance, has_anomalies)) => {
                 // 更新余额记录
                 match save_account_balance(balances_col, &account, &balance).await {
@@ -165,8 +168,11 @@ pub async fn calculate_incremental_balances(
     balances_col: &Collection<Document>,
     supply_col: &Collection<Document>,
     anomalies_col: &Collection<Document>,
-    token_decimals: u8,
+    token_config: &crate::models::TokenConfig,
 ) -> Result<(u64, u64), Box<dyn Error>> {
+    // 获取代币小数位数，默认为8
+    let token_decimals = token_config.decimals.unwrap_or(8);
+    let token_symbol = &token_config.symbol;
     if new_transactions.is_empty() {
         debug!("没有新交易需要计算余额");
         return Ok((0, 0));
@@ -277,7 +283,7 @@ pub async fn calculate_incremental_balances(
         }
         
         // 计算该账户的余额
-        match calculate_account_balance(&account, &tx_indices, tx_col, token_decimals, anomalies_col).await {
+        match calculate_account_balance(&account, &tx_indices, tx_col, token_config, anomalies_col).await {
             Ok((balance, has_anomalies)) => {
                 // 更新余额记录
                 match save_account_balance(balances_col, &account, &balance).await {
@@ -311,13 +317,16 @@ pub async fn calculate_incremental_balances(
 }
 
 /// 计算单个账户的余额
-async fn calculate_account_balance(
+pub async fn calculate_account_balance(
     account: &str,
     tx_indices: &[i64],
     tx_col: &Collection<Document>,
-    token_decimals: u8,
+    token_config: &crate::models::TokenConfig,
     anomalies_col: &Collection<Document>,
 ) -> Result<(Nat, bool), Box<dyn Error>> {
+    // 获取代币小数位数，默认为8
+    let token_decimals = token_config.decimals.unwrap_or(8);
+    let token_symbol = &token_config.symbol;
     // 规范化账户ID
     let normalized_account = normalize_account_id(account);
     let mut balance = Nat::from(0u64);
