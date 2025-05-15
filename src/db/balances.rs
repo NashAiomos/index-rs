@@ -63,6 +63,7 @@ pub async fn clear_balances(balances_col: &Collection<Document>) -> Result<u64, 
 
 /// 计算并保存账户余额 - 新算法
 /// 在所有交易同步完成后调用，根据accounts数据和transactions集合计算每个账户的余额
+#[allow(unused_variables)]
 pub async fn calculate_all_balances(
     accounts_col: &Collection<Document>,
     tx_col: &Collection<Document>,

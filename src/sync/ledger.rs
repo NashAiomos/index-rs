@@ -128,7 +128,7 @@ fn log_transaction_details(tx: &Transaction) {
 async fn verify_synced_transactions(
     tx_col: &Collection<Document>,
     _sync_status_col: &Collection<Document>,
-    token_symbol: &str,
+    _token_symbol: &str,
     last_synced_index: u64,
     verification_range: u64,
 ) -> Result<(bool, u64), Box<dyn Error>> {

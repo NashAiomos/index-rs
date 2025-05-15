@@ -4,10 +4,11 @@ use warp::filters::BoxedFilter;
 use mongodb::bson::{doc, Document};
 use serde::{Serialize, Deserialize};
 use log::{info, error, debug};
+use futures::stream::StreamExt;
 use crate::db::DbConnection;
 use crate::api;
 use crate::models::Transaction;
-use crate::error::{ApiError, handle_rejection, map_error, map_db_error};
+use crate::error::{ApiError, handle_rejection, map_db_error};
 
 /// 辅助函数：将Transaction对象转换为BSON Document
 /// 
@@ -258,7 +259,7 @@ impl ApiServer {
             .and(with_db(db_conn.clone()))
             .and(warp::any().map(move || tokens_for_latest.clone()))
             .and_then(|params, db, tokens| async move {
-                handle_get_latest_transactions(params, db, tokens).await
+                handle_get_transaction_count(params, db, tokens).await
             });
 
         // 获取交易总数
@@ -429,7 +430,7 @@ async fn handle_get_balance(
                 "balance": balance.clone(),
                 "token": token.symbol.clone(),
                 "token_name": token.name.clone(),
-                "decimals": token.decimals.unwrap_or(8),
+                "decimals": token.decimals.unwrap_or(8) as i32,
             });
             info!("API响应成功: 获取账户余额 - account: {}, balance: {}, token: {}", 
                   account, balance, token.symbol);
@@ -515,6 +516,61 @@ async fn handle_get_account_transactions(
             Err(warp::reject::custom(map_db_error(e)))
         }
     }
+}
+
+/// 处理函数：获取最新交易列表
+///
+/// # 参数
+/// * `params` - 查询参数，包括可选的token和limit
+/// * `db_conn` - 数据库连接
+/// * `tokens` - 代币配置列表
+///
+/// # 返回
+/// 成功时返回最新交易列表，失败时返回错误信息
+async fn handle_get_latest_transactions(
+    params: QueryParams,
+    db_conn: Arc<DbConnection>,
+    tokens: Vec<crate::models::TokenConfig>,
+) -> Result<impl Reply, Rejection> {
+    // 查找对应的代币配置
+    let token = find_token(&tokens, params.token.as_deref())?;
+    
+    // 获取交易集合
+    let tx_col = db_conn.get_transactions_collection(&token.symbol);
+    
+    // 设置分页参数
+    let limit = params.limit.unwrap_or(20).min(100); // 最多返回100条记录
+    
+    // 构建查询过滤器和选项
+    let filter = doc! {};
+    let options = mongodb::options::FindOptions::builder()
+        .sort(doc! { "index": -1 }) // 按索引降序排序
+        .limit(limit)
+        .build();
+    
+    // 执行查询
+    let mut cursor = tx_col.find(filter, options).await
+        .map_err(|e| warp::reject::custom(
+            ApiError::Database(format!("查询交易失败: {}", e))
+        ))?;
+    
+    // 收集结果
+    let mut transactions = Vec::new();
+    while let Some(result) = cursor.next().await {
+        match result {
+            Ok(doc) => transactions.push(doc),
+            Err(e) => {
+                error!("解析交易文档失败: {}", e);
+                return Err(warp::reject::custom(
+                    ApiError::Database(format!("解析交易文档失败: {}", e))
+                ));
+            }
+        }
+    }
+    
+    // 构建响应
+    let response = ApiResponse::success(transactions);
+    Ok(warp::reply::json(&response))
 }
 
 /// 处理函数：获取特定交易详情

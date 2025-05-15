@@ -70,6 +70,8 @@ pub fn map_error<E: std::error::Error>(err: E) -> ApiError {
 }
 
 /// 从数据库错误转换为API错误
-pub fn map_db_error<E: std::error::Error>(err: E) -> ApiError {
+pub fn map_db_error<E>(err: E) -> ApiError 
+where E: std::fmt::Display
+{
     ApiError::Database(err.to_string())
 }

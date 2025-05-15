@@ -25,6 +25,17 @@ pub struct DbConnection {
     pub db_semaphore: Arc<Semaphore>,
 }
 
+impl DbConnection {
+    /// 获取指定代币的交易集合
+    pub fn get_transactions_collection(&self, token_symbol: &str) -> Collection<Document> {
+        if let Some(collections) = self.collections.get(token_symbol) {
+            collections.tx_col.clone()
+        } else {
+            panic!("未找到代币 {} 的集合", token_symbol)
+        }
+    }
+}
+
 #[derive(Clone)]
 /// 单个代币的所有集合
 pub struct TokenCollections {

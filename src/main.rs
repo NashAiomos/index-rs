@@ -1,3 +1,10 @@
+#![allow(unused_variables)]
+#![allow(improper_ctypes_definitions)]
+#![allow(improper_ctypes)]
+#![allow(non_camel_case_types)]
+#![allow(type_alias_bounds)]
+#![allow(dead_code)]
+
 mod models;
 mod utils;
 mod config;
@@ -6,6 +13,7 @@ mod db;
 mod sync;
 mod api;
 mod api_server;
+mod error;
 
 use std::error::Error;
 use std::collections::HashMap;
