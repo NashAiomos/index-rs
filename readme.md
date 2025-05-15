@@ -242,13 +242,19 @@ cors_enabled = true
 - 描述：查询指定账户的当前余额，返回字符串形式的余额数值
 - 示例请求：
   ```
-  GET /api/balance/ryjl3-tyaaa-aaaaa-aaaba-cai?token=ICP
+  GET /api/balance/5667a-dzhlm-w6u3z-fq2o5-lmjho-yrkdy-idhr6-6n3jx-gg4u7-fmbqg-4qe?token=VUSD
   ```
 - 示例响应：
   ```json
   {
     "code": 200,
-    "data": "1234567890",
+    "data": {
+        "account": "5667a-dzhlm-w6u3z-fq2o5-lmjho-yrkdy-idhr6-6n3jx-gg4u7-fmbqg-4qe",
+        "balance": "53457",
+        "token": "VUSD",
+        "token_name": "VUSD",
+        "decimals": 6
+    },
     "error": null
   }
   ```
@@ -263,7 +269,7 @@ cors_enabled = true
 - 描述：分页查询指定账户的交易历史，按交易索引倒序排列
 - 示例请求：
   ```
-  GET /api/transactions/ryjl3-tyaaa-aaaaa-aaaba-cai?limit=10&skip=0&token=ICP
+  GET /api/transactions/ryjl3-tyaaa-aaaaa-aaaba-cai?limit=10&skip=0&token=VUSD
   ```
 
 #### GET /api/accounts
@@ -274,7 +280,7 @@ cors_enabled = true
 - 描述：分页获取所有账户列表，按账户字符串正序排列
 - 示例请求：
   ```
-  GET /api/accounts?limit=20&skip=0&token=ICP
+  GET /api/accounts?limit=20&skip=0&token=VUSD
   ```
 
 #### GET /api/active_accounts
@@ -284,7 +290,7 @@ cors_enabled = true
 - 描述：获取最近交易中活跃的唯一账户列表，按最新交易时间倒序
 - 示例请求：
   ```
-  GET /api/active_accounts?limit=20&token=ICP
+  GET /api/active_accounts?limit=20&token=VUSD
   ```
 
 #### GET /api/account_count
@@ -293,7 +299,7 @@ cors_enabled = true
 - 描述：获取特定代币的账户总数
 - 示例请求：
   ```
-  GET /api/account_count?token=ICP
+  GET /api/account_count?token=VUSD
   ```
 
 ### 交易相关
@@ -306,7 +312,7 @@ cors_enabled = true
 - 描述：查询指定索引交易的完整详情
 - 示例请求：
   ```
-  GET /api/transaction/1024?token=ICP
+  GET /api/transaction/1024?token=VUSD
   ```
 
 #### GET /api/latest_transactions
@@ -316,7 +322,7 @@ cors_enabled = true
 - 描述：获取按索引倒序排列的最新交易列表
 - 示例请求：
   ```
-  GET /api/latest_transactions?limit=5&token=ICP
+  GET /api/latest_transactions?limit=5&token=VUSD
   ```
 
 #### GET /api/tx_count
@@ -325,7 +331,7 @@ cors_enabled = true
 - 描述：获取特定代币的交易总数
 - 示例请求：
   ```
-  GET /api/tx_count?token=ICP
+  GET /api/tx_count?token=VUSD
   ```
 
 #### POST /api/search
@@ -346,7 +352,7 @@ cors_enabled = true
 - 描述：根据条件高级搜索交易，返回匹配结果列表
 - 示例请求：
   ```
-  POST /api/search?token=ICP&limit=20
+  POST /api/search?token=VUSD&limit=20
   Content-Type: application/json
 
   {
@@ -373,154 +379,5 @@ cors_enabled = true
   "code": 400,
   "data": null,
   "error": "错误信息"
-}
-```
-
-## 示例
-
-### 查询账户余额
-
-```
-GET /api/balance/ryjl3-tyaaa-aaaaa-aaaba-cai
-```
-
-响应:
-
-```json
-{
-  "code": 200,
-  "data": "1000000000",
-  "error": null
-}
-```
-
-### 查询账户交易历史
-
-```
-GET /api/transactions/ryjl3-tyaaa-aaaaa-aaaba-cai?limit=2&skip=0
-```
-
-响应:
-
-```json
-{
-  "code": 200,
-  "data": [
-    {
-      "kind": "transfer",
-      "timestamp": 1677721600000000000,
-      "transfer": {
-        "from": {"owner": "ryjl3-tyaaa-aaaaa-aaaba-cai"},
-        "to": {"owner": "aaaaa-aa"},
-        "amount": "100000000"
-      },
-      "index": 1024
-    },
-    {
-      "kind": "mint",
-      "timestamp": 1677721500000000000,
-      "mint": {
-        "to": {"owner": "ryjl3-tyaaa-aaaaa-aaaba-cai"},
-        "amount": "1000000000"
-      },
-      "index": 1023
-    }
-  ],
-  "error": null
-}
-```
-
-### 查询特定交易详情
-
-```
-GET /api/transaction/1024
-```
-
-响应:
-
-```json
-{
-  "code": 200,
-  "data": {
-    "kind": "transfer",
-    "timestamp": 1677721600000000000,
-    "transfer": {
-      "from": {"owner": "ryjl3-tyaaa-aaaaa-aaaba-cai"},
-      "to": {"owner": "bbbb5-xxxxx"},
-      "amount": "50000000"
-    },
-    "index": 1024
-  },
-  "error": null
-}
-```
-
-### 获取最新交易
-
-```
-GET /api/latest_transactions?limit=3&skip=0
-```
-
-响应:
-
-```json
-{
-  "code": 200,
-  "data": [
-    {
-      "kind": "transfer",
-      "timestamp": 1677721700000000000,
-      "transfer": {...},
-      "index": 1030
-    },
-    {
-      "kind": "mint",
-      "timestamp": 1677721650000000000,
-      "mint": {...},
-      "index": 1029
-    },
-    {
-      "kind": "burn",
-      "timestamp": 1677721600000000000,
-      "burn": {
-        "from": {"owner": "cccc6-xxxxx"},
-        "amount": "1000000"
-      },
-      "index": 1028
-    }
-  ],
-  "error": null
-}
-```
-
-### 获取交易总数
-
-```
-GET /api/tx_count
-```
-
-响应:
-
-```json
-{
-  "code": 200,
-  "data": 2048,
-  "error": null
-}
-```
-
-### 获取账户总数
-
-```
-GET /api/account_count
-```
-
-响应:
-
-```json
-{
-  "code": 200,
-  "data": 512,
-  "error": null
 }
 ```
