@@ -128,6 +128,7 @@ fn log_transaction_details(tx: &Transaction) {
 async fn verify_synced_transactions(
     tx_col: &Collection<Document>,
     _sync_status_col: &Collection<Document>,
+    _token_symbol: &str,
     last_synced_index: u64,
     verification_range: u64,
 ) -> Result<(bool, u64), Box<dyn Error>> {
@@ -219,9 +220,12 @@ pub async fn sync_ledger_transactions(
     accounts_col: &Collection<Document>,
     _balances_col: &Collection<Document>,
     _supply_col: &Collection<Document>,
-    _token_decimals: u8,
+    token_config: &crate::models::TokenConfig,
     _calculate_balance: bool,
 ) -> Result<Vec<Transaction>, Box<dyn Error>> {
+    // 从配置中提取代币符号和小数位数
+    let token_symbol = &token_config.symbol;
+    let _token_decimals = token_config.decimals.unwrap_or(8);
     // 兼容现有API，第5个参数是sync_status_col
     let sync_status_col = _balances_col;
     
@@ -229,7 +233,7 @@ pub async fn sync_ledger_transactions(
     let mut start_from_sync_status = false;
     let mut sync_status_index = 0;
     
-    if let Ok(Some(status)) = get_sync_status(sync_status_col).await {
+    if let Ok(Some(status)) = get_sync_status(sync_status_col, token_symbol).await {
         if status.sync_mode == "incremental" && status.last_synced_index > 0 {
             info!("从同步状态恢复，上次同步到索引: {}", status.last_synced_index);
             start_from_sync_status = true;
@@ -237,14 +241,14 @@ pub async fn sync_ledger_transactions(
             
             // 验证同步点附近交易的完整性
             let verification_range = 20; // 验证前20笔交易
-            match verify_synced_transactions(tx_col, sync_status_col, sync_status_index, verification_range).await {
+            match verify_synced_transactions(tx_col, sync_status_col, token_symbol, sync_status_index, verification_range).await {
                 Ok((valid, recommended_point)) => {
                     if !valid {
                         warn!("同步点验证失败，将从索引 {} 重新开始同步", recommended_point);
                         sync_status_index = recommended_point;
                         
                         // 更新同步状态
-                        if let Err(e) = set_incremental_mode(sync_status_col, recommended_point, 0).await {
+                        if let Err(e) = set_incremental_mode(sync_status_col, token_symbol, recommended_point, 0).await {
                             error!("更新同步状态失败: {}", e);
                         } else {
                             info!("已更新同步状态到索引 {}", recommended_point);
@@ -355,7 +359,7 @@ pub async fn sync_ledger_transactions(
                     
                     // 检查是否应该更新同步状态 - 如果有新交易同步过
                     if latest_tx_index > last_status_update_index {
-                        if let Err(e) = set_incremental_mode(sync_status_col, latest_tx_index, latest_tx_timestamp).await {
+                        if let Err(e) = set_incremental_mode(sync_status_col, token_symbol, latest_tx_index, latest_tx_timestamp).await {
                             warn!("连续空结果时更新同步状态失败: {}", e);
                         } else {
                             info!("已更新同步状态索引: {} -> {}", last_status_update_index, latest_tx_index);
@@ -434,7 +438,7 @@ pub async fn sync_ledger_transactions(
                 if latest_tx_index > last_status_update_index && 
                    ((latest_tx_index - last_status_update_index) as usize >= status_update_frequency || 
                     all_new_transactions.len() % status_update_frequency == 0) {
-                    if let Err(e) = set_incremental_mode(sync_status_col, latest_tx_index, latest_tx_timestamp).await {
+                    if let Err(e) = set_incremental_mode(sync_status_col, token_symbol, latest_tx_index, latest_tx_timestamp).await {
                         warn!("更新同步状态失败: {}", e);
                     } else {
                         info!("已更新同步状态索引: {} -> {}", last_status_update_index, latest_tx_index);
@@ -456,7 +460,7 @@ pub async fn sync_ledger_transactions(
                         warn!("达到最大重试次数但已有部分交易，将保存当前同步状态后重试...");
                         
                         // 保存当前同步状态
-                        if let Err(status_err) = set_incremental_mode(sync_status_col, latest_tx_index, latest_tx_timestamp).await {
+                        if let Err(status_err) = set_incremental_mode(sync_status_col, token_symbol, latest_tx_index, latest_tx_timestamp).await {
                             error!("错误恢复时保存同步状态失败: {}", status_err);
                         } else {
                             info!("错误恢复：已保存同步状态至索引 {}", latest_tx_index);
@@ -499,7 +503,7 @@ pub async fn sync_ledger_transactions(
     
     // 完成同步后，更新同步状态
     if latest_tx_index > latest_index {
-        if let Err(e) = set_incremental_mode(sync_status_col, latest_tx_index, latest_tx_timestamp).await {
+        if let Err(e) = set_incremental_mode(sync_status_col, token_symbol, latest_tx_index, latest_tx_timestamp).await {
             error!("最终更新同步状态失败: {}", e);
         } else {
             info!("同步状态已更新至最新索引: {} (共同步 {} 笔新交易)", latest_tx_index, all_new_transactions.len());

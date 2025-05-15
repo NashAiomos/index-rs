@@ -201,9 +201,8 @@ pub struct LogConfig {
 pub struct Config {
     pub mongodb_url: String,
     pub database: String,
-    pub ledger_canister_id: String,
     pub ic_url: String,
-    pub token_decimals: Option<u8>, // 可选配置，如果未指定则查询获取
+    pub tokens: Vec<TokenConfig>,  // 多代币配置
     pub log: Option<LogConfig>,    // 日志配置
     pub api_server: Option<ApiServerConfig>, // API服务器配置
 }
@@ -221,6 +220,19 @@ pub struct ApiServerConfig {
 #[derive(Debug, Clone)]
 pub struct AppArgs {
     pub reset: bool,
+}
+
+/// 代币配置结构体
+#[derive(Debug, Deserialize, Clone)]
+pub struct TokenConfig {
+    /// 代币标识符，用于数据库中区分不同代币
+    pub symbol: String,
+    /// 代币名称
+    pub name: String,
+    /// 代币的canister ID
+    pub canister_id: String,
+    /// 代币小数位数
+    pub decimals: Option<u8>,
 }
 
 /// 余额异常记录

@@ -1,8 +1,24 @@
 mongodb_url = "mongodb://localhost:27017"
 database = "ledger"
 ic_url = "https://icp0.io"
-ledger_canister_id = "anbw7-hqaaa-aaaaj-az7ra-cai"
-token_decimals = 6
+
+# 代币配置列表
+[[tokens]]
+# 代币标识符 (用于在数据库中区分不同代币)
+symbol = "VUSD"
+# 代币名称
+name = "VUSD"
+# 代币canister_id
+canister_id = "anbw7-hqaaa-aaaaj-az7ra-cai"
+# 代币小数位
+decimals = 6
+
+# 可以添加更多代币配置
+[[tokens]]
+symbol = "LIKE"
+name = "LIKE"
+canister_id = "spdsf-5yaaa-aaaam-adcnq-cai"
+decimals = 6
 
 # 日志配置
 [log]

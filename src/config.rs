@@ -30,6 +30,16 @@ pub async fn load_config() -> Result<AppConfig, Box<dyn Error>> {
             return Err(create_error(&format!("配置解析错误: {}", e)));
         }
     };
+    
+    // 验证代币配置
+    if cfg.tokens.is_empty() {
+        return Err(create_error("配置文件中没有发现代币配置，请至少配置一个代币"));
+    }
+    
+    info!("已加载 {} 个代币的配置", cfg.tokens.len());
+    for token in &cfg.tokens {
+        info!("代币配置: {} ({}) canister_id: {}", token.name, token.symbol, token.canister_id);
+    }
 
     Ok(cfg)
 }
@@ -46,16 +56,17 @@ pub async fn parse_args(args: &crate::models::AppArgs) -> Result<(), Box<dyn Err
 pub async fn get_token_decimals(
     agent: &Agent,
     canister_id: &Principal,
+    token_symbol: &str,
 ) -> Result<u8, Box<dyn Error>> {
-    info!("查询代币小数位数...");
+    info!("{}: 查询代币小数位数...", token_symbol);
     
     // 调用icrc1_decimals方法
     let empty_args = ();
     let arg_bytes = match Encode!(&empty_args) {
         Ok(bytes) => bytes,
         Err(e) => {
-            error!("编码参数失败: {}", e);
-            return Err(create_error(&format!("参数编码失败: {}", e)));
+            error!("{}: 编码参数失败: {}", token_symbol, e);
+            return Err(create_error(&format!("{}: 参数编码失败: {}", token_symbol, e)));
         }
     };
     
@@ -71,11 +82,11 @@ pub async fn get_token_decimals(
             Ok(response) => {
                 match Decode!(&response, u8) {
                     Ok(decimals) => {
-                        info!("代币小数位数: {}", decimals);
+                        info!("{}: 代币小数位数: {}", token_symbol, decimals);
                         return Ok(decimals);
                     },
                     Err(e) => {
-                        warn!("解析decimals响应失败: {}, 使用默认值{}", e, DEFAULT_DECIMALS);
+                        warn!("{}: 解析decimals响应失败: {}, 使用默认值{}", token_symbol, e, DEFAULT_DECIMALS);
                         return Ok(DEFAULT_DECIMALS);
                     }
                 }
@@ -83,14 +94,14 @@ pub async fn get_token_decimals(
             Err(e) => {
                 retry_count += 1;
                 let wait_time = std::time::Duration::from_secs(2 * retry_count);
-                warn!("查询decimals失败 (尝试 {}/{}): {}, 等待 {:?} 后重试", 
-                    retry_count, max_retries, e, wait_time);
+                warn!("{}: 查询decimals失败 (尝试 {}/{}): {}, 等待 {:?} 后重试", 
+                    token_symbol, retry_count, max_retries, e, wait_time);
                 tokio::time::sleep(wait_time).await;
             }
         }
     }
     
-    warn!("查询decimals达到最大重试次数，使用默认值{}", DEFAULT_DECIMALS);
+    warn!("{}: 查询decimals达到最大重试次数，使用默认值{}", token_symbol, DEFAULT_DECIMALS);
     Ok(DEFAULT_DECIMALS)
 }
 
