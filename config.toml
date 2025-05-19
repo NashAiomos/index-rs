@@ -20,6 +20,16 @@ name = "LIKE"
 canister_id = "spdsf-5yaaa-aaaam-adcnq-cai"
 decimals = 6
 
+[[tokens]]
+symbol = "WORM"
+name = "WORM"
+canister_id = "3j5nq-qqaaa-aaaam-acvrq-cai"
+
+[[tokens]]
+symbol = "NANAS"
+name = "NANAS"
+canister_id = "mwen2-oqaaa-aaaam-adaca-cai"
+
 # 日志配置
 [log]
 # 日志级别: error, warn, info, debug, trace
