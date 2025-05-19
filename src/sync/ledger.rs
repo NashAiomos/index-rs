@@ -334,13 +334,6 @@ pub async fn sync_ledger_transactions(
                     continue;
                 }
                 
-                // 如果是第一次查询且初始索引为0，但first_index不是0，则使用first_index
-                if current_index == 1 && first_index > 0 {
-                    info!("首次查询，调整初始索引为区块链上的first_index: {}", first_index);
-                    current_index = first_index;
-                    continue;
-                }
-                
                 if transactions.is_empty() {
                     consecutive_empty += 1;
                     debug!("没有获取到新交易 ({}/{}), 可能已到达链上最新状态或索引有误", 
@@ -516,4 +509,3 @@ pub async fn sync_ledger_transactions(
     info!("🏁 交易同步完成，当前索引: {}, 共同步 {} 笔新交易", current_index - 1, all_new_transactions.len());
     Ok(all_new_transactions)
 }
-
