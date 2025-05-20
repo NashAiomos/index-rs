@@ -7,14 +7,14 @@
  * - 保存交易到数据库
  * 
  * 主要组件:
- * - sync_archive_transactions函数 (第14-182行): 主要同步函数，协调整体同步流程
- *   - 获取归档canister信息 (第20-40行)
- *   - 按批次获取归档交易 (第76-170行)
- *   - 处理和保存交易数据 (第101-125行)
- * - process_single_archive函数 (第185-316行): 处理单个归档canister的函数
- *   - 测试归档canister可用性 (第196-216行)
- *   - 分批处理归档交易 (第218-268行)
- *   - 保存交易到数据库 (第270-295行)
+ * - sync_archive_transactions函数: 主要同步函数，协调整体同步流程
+ *   - 获取归档canister信息
+ *   - 按批次获取归档交易
+ *   - 处理和保存交易数据
+ * - process_single_archive函数: 处理单个归档canister的函数
+ *   - 测试归档canister可用性
+ *   - 分批处理归档交易
+ *   - 保存交易到数据库
  */
 
 use std::error::Error;

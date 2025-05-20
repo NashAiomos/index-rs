@@ -6,11 +6,11 @@
  * - 提供错误映射函数
  * 
  * 主要组件:
- * - ApiError枚举 (第6-17行): 定义不同类型的API错误
- * - fmt::Display实现 (第19-30行): 错误消息格式化
- * - handle_rejection函数 (第37-62行): 将错误转换为HTTP响应
- * - map_error函数 (第65-67行): 将标准错误转换为API错误
- * - map_db_error函数 (第70-74行): 将数据库错误转换为API错误
+ * - ApiError枚举 (第19-36行): 定义不同类型的API错误
+ * - fmt::Display实现 (第38-49行): 错误消息格式化
+ * - handle_rejection函数 (第55-82行): 将错误转换为HTTP响应
+ * - map_error函数 (第84-88行): 将标准错误转换为API错误
+ * - map_db_error函数 (第90-95行): 将数据库错误转换为API错误
  */
 
 use std::fmt;
@@ -28,8 +28,10 @@ pub enum ApiError {
     /// 代币相关错误
     TokenError(String),
     /// 内部服务器错误
+    #[allow(dead_code)]
     Internal(String),
     /// 序列化/反序列化错误
+    #[allow(dead_code)]
     SerializationError(String),
 }
 
@@ -80,6 +82,7 @@ pub async fn handle_rejection(err: warp::Rejection) -> Result<impl warp::Reply, 
 }
 
 /// 从标准错误转换为API错误
+#[allow(dead_code)]
 pub fn map_error<E: std::error::Error>(err: E) -> ApiError {
     ApiError::Internal(err.to_string())
 }

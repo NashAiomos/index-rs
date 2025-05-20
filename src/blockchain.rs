@@ -7,15 +7,15 @@
  * - 实现容错和重试机制
  * 
  * 主要组件:
- * - fetch_archives函数 (第14-37行): 获取归档canister信息
- * - fetch_archive_transactions函数 (第40-164行): 从归档canister获取历史交易
- *   - 尝试多种解码方式适应不同格式 (第78-156行)
- *   - 实现重试机制 (第67-75行, 158-162行)
- * - fetch_ledger_transactions函数 (第167-284行): 从主账本获取交易
- *   - 尝试多种解码方式 (第191-246行)
- *   - 处理交易索引和日志长度 (第203-216行)
- * - get_first_transaction_index函数 (第287-343行): 获取区块链上的第一个交易索引
- * - test_archive_transactions函数 (第346-496行): 测试归档canister可用性
+ * - fetch_archives函数 (第35-58行): 获取归档canister信息
+ * - fetch_archive_transactions函数 (第60-193行): 从归档canister获取历史交易
+ *   - 尝试多种解码方式适应不同格式 (第105-159行)
+ *   - 实现重试机制 (第89-101行, 第160-193行)
+ * - fetch_ledger_transactions函数 (第196-283行): 从主账本获取交易
+ *   - 尝试多种解码方式 (第202-257行)
+ *   - 处理交易索引和日志长度 (第206-215行)
+ * - get_first_transaction_index函数 (第286-342行): 获取区块链上的第一个交易索引
+ * - test_archive_transactions函数 (第345-496行): 测试归档canister可用性
  */
 
 use std::error::Error;

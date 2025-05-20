@@ -1,3 +1,17 @@
+/**
+ * 文件描述: 账户管理模块，负责账户与交易关系的管理
+ * 功能概述:
+ * - 管理账户与交易索引的关联
+ * - 提供账户数据清理功能
+ * - 支持查询账户关联的交易
+ * - 实现重试机制确保数据一致性
+ * 
+ * 主要组件:
+ * - save_account_transaction函数: 保存账户与交易索引的关系
+ * - clear_accounts函数: 清空账户集合
+ * - get_account_transactions函数: 查询某账户下的所有交易
+ */
+
 use std::error::Error;
 use mongodb::{Collection, bson::{doc, Document}};
 use tokio::time::Duration;

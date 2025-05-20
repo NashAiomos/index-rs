@@ -7,14 +7,14 @@
  * - 支持全量和增量余额计算
  * 
  * 主要组件:
- * - get_account_balance函数 (第30-44行): 获取指定账户的余额
- * - calculate_all_balances函数 (第63-157行): 全量计算所有账户余额
- * - calculate_incremental_balances函数 (第161-271行): 增量计算受影响账户的余额
- * - calculate_account_balance函数 (第274-575行): 根据交易历史计算单个账户余额
- * - safe_subtract_balance_with_logging函数 (第577-617行): 安全扣减余额并记录异常
- * - log_balance_anomaly函数 (第619-637行): 记录余额异常
- * - save_account_balance函数 (第693-736行): 保存账户余额
- * - normalize_account_id函数 (第739-756行): 规范化账户ID格式
+ * - get_account_balance函数: 获取指定账户的余额
+ * - calculate_all_balances函数: 全量计算所有账户余额
+ * - calculate_incremental_balances函数: 增量计算受影响账户的余额
+ * - calculate_account_balance函数: 根据交易历史计算单个账户余额
+ * - safe_subtract_balance_with_logging函数: 安全扣减余额并记录异常
+ * - log_balance_anomaly函数: 记录余额异常
+ * - save_account_balance函数: 保存账户余额
+ * - normalize_account_id函数: 规范化账户ID格式
  */
 
 use std::error::Error;
@@ -92,8 +92,8 @@ pub async fn calculate_all_balances(
     token_config: &crate::models::TokenConfig,
 ) -> Result<(u64, u64), Box<dyn Error>> {
     // 获取代币小数位数，默认为8
-    let token_decimals = token_config.decimals.unwrap_or(8);
-    let token_symbol = &token_config.symbol;
+    let _token_decimals = token_config.decimals.unwrap_or(8);
+    let _token_symbol = &token_config.symbol;
     info!("开始计算所有账户余额...");
     
     // 首先清空余额集合
@@ -191,8 +191,8 @@ pub async fn calculate_incremental_balances(
     token_config: &crate::models::TokenConfig,
 ) -> Result<(u64, u64), Box<dyn Error>> {
     // 获取代币小数位数，默认为8
-    let token_decimals = token_config.decimals.unwrap_or(8);
-    let token_symbol = &token_config.symbol;
+    let _token_decimals = token_config.decimals.unwrap_or(8);
+    let _token_symbol = &token_config.symbol;
     if new_transactions.is_empty() {
         debug!("没有新交易需要计算余额");
         return Ok((0, 0));
@@ -345,8 +345,8 @@ pub async fn calculate_account_balance(
     anomalies_col: &Collection<Document>,
 ) -> Result<(Nat, bool), Box<dyn Error>> {
     // 获取代币小数位数，默认为8
-    let token_decimals = token_config.decimals.unwrap_or(8);
-    let token_symbol = &token_config.symbol;
+    let _token_decimals = token_config.decimals.unwrap_or(8);
+    let _token_symbol = &token_config.symbol;
     // 规范化账户ID
     let normalized_account = normalize_account_id(account);
     let mut balance = Nat::from(0u64);
@@ -582,7 +582,7 @@ pub async fn calculate_account_balance(
     
     // 使用更精简的日志格式
     debug!("已完成 {} 余额计算，共 {} 笔交易，余额：{} ({} 代币)", 
-           normalized_account, processed_count, balance.0, format_token_amount(&balance, token_decimals));
+           normalized_account, processed_count, balance.0, format_token_amount(&balance, _token_decimals));
            
     if has_anomalies {
         info!("账户 {} 在余额计算中检测到异常，已记录详细信息", normalized_account);

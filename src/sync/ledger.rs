@@ -7,14 +7,14 @@
  * - 管理同步状态
  * 
  * 主要组件:
- * - log_transaction_details函数 (第14-118行): 将交易详情打印到日志
- * - verify_synced_transactions函数 (第121-191行): 验证同步点附近交易的完整性
- * - sync_ledger_transactions函数 (第194-512行): 主同步函数，负责从区块链获取和保存交易
- *   - 同步状态检查 (第205-245行): 检查和验证现有同步状态
- *   - 确定同步起点 (第248-280行): 确定从哪个索引开始同步
- *   - 主同步循环 (第304-482行): 循环获取和处理交易批次
- *   - 交易保存 (第334-376行): 将交易保存到数据库
- *   - 错误恢复 (第425-468行): 处理同步过程中的错误
+ * - log_transaction_details函数: 将交易详情打印到日志
+ * - verify_synced_transactions函数: 验证同步点附近交易的完整性
+ * - sync_ledger_transactions函数: 主同步函数，负责从区块链获取和保存交易
+ *   - 同步状态检查: 检查和验证现有同步状态
+ *   - 确定同步起点: 确定从哪个索引开始同步
+ *   - 主同步循环: 循环获取和处理交易批次
+ *   - 交易保存: 将交易保存到数据库
+ *   - 错误恢复: 处理同步过程中的错误
  */
 
 use std::error::Error;
@@ -336,7 +336,6 @@ pub async fn sync_ledger_transactions(
     let status_update_frequency: usize = 100;  // 每同步100笔交易更新一次状态
     
     info!("🚀 开始增量同步交易数据，从索引 {} 开始", current_index);
-    info!("=====================================================");
     
     // 尝试同步交易，每次获取一批
     while retry_count < max_retries && consecutive_empty < max_consecutive_empty {
@@ -524,7 +523,6 @@ pub async fn sync_ledger_transactions(
         info!("无新交易，保持同步状态在索引: {}", latest_index);
     }
     
-    info!("=====================================================");
     info!("🏁 交易同步完成，当前索引: {}, 共同步 {} 笔新交易", current_index - 1, all_new_transactions.len());
     Ok(all_new_transactions)
 }

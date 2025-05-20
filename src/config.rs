@@ -7,11 +7,11 @@
  * - 获取代币信息
  * 
  * 主要组件:
- * - load_config函数 (第13-49行): 从config.toml文件加载应用配置
- * - parse_args函数 (第52-57行): 解析命令行参数(如--reset)
- * - get_token_decimals函数 (第60-102行): 从IC网络获取代币小数位数
- * - create_agent函数 (第105-117行): 创建IC网络连接代理
- * - parse_canister_id函数 (第120-127行): 解析Canister ID为Principal类型
+ * - load_config函数 (第26-61行): 从config.toml文件加载应用配置
+ * - parse_args函数 (第63-69行): 解析命令行参数(如--reset)
+ * - get_token_decimals函数 (第71-122行): 从IC网络获取代币小数位数
+ * - create_agent函数 (第124-138行): 创建IC网络连接代理
+ * - parse_canister_id函数 (第140-149行): 解析Canister ID为Principal类型
  */
 
 use std::error::Error;
