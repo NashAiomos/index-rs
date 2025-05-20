@@ -413,6 +413,7 @@ async fn run_application(cfg: models::Config) -> Result<(), Box<dyn Error>> {
             }
             
             info!("{}: 初始同步和余额计算完成", token.symbol);
+            info!("=====================================================");
         } else if let Ok(Some(status)) = sync_status {
             // 检查是否需要验证同步状态的完整性
             info!("{}: 从断点继续同步，验证同步状态的完整性...", token.symbol);
@@ -489,7 +490,7 @@ async fn run_application(cfg: models::Config) -> Result<(), Box<dyn Error>> {
     info!("开始实时监控多代币的新交易");
     let mut consecutive_errors = HashMap::new();
     let max_consecutive_errors = 5;
-    let token_rotation_delay = Duration::from_secs(2); // 不同代币同步间隔
+    let token_rotation_delay = Duration::from_secs(1); // 不同代币同步间隔
     
     // 当没有代币时直接返回
     if cfg.tokens.is_empty() {
@@ -510,10 +511,14 @@ async fn run_application(cfg: models::Config) -> Result<(), Box<dyn Error>> {
         // 获取当前要同步的代币
         let (index, token) = token_iter.next().unwrap();
         
-        // 如果不是第一个代币，等待2秒再同步
+        // 如果不是第一个代币，等待1秒再同步
         if index > 0 {
             tokio::time::sleep(token_rotation_delay).await;
         }
+        
+        // 分割线与开始信息
+        info!("=====================================================");
+        info!("🚀 开始增量同步代币: {}", token.symbol);
         
         debug!("{}: 执行定时增量同步...", token.symbol);
         
@@ -564,9 +569,10 @@ async fn run_application(cfg: models::Config) -> Result<(), Box<dyn Error>> {
             false // 增量同步时不再实时计算余额
         ).await {
             Ok(new_transactions) => {
+                let tx_count = new_transactions.len();
                 // 同步完成后，只计算新交易相关账户的余额
                 if !new_transactions.is_empty() {
-                    info!("{}: 增量同步获取到 {} 笔新交易，计算相关账户余额...", token.symbol, new_transactions.len());
+                    info!("{}: 增量同步获取到 {} 笔新交易，计算相关账户余额...", token.symbol, tx_count);
                     match calculate_incremental_balances(
                         &new_transactions,
                         &collections.tx_col,
@@ -589,6 +595,10 @@ async fn run_application(cfg: models::Config) -> Result<(), Box<dyn Error>> {
                     debug!("{}: 没有获取到新交易，跳过余额计算", token.symbol);
                     *error_count = 0; // 重置错误计数
                 }
+                
+                // 结束信息
+                info!("🏁 代币 {} 增量同步完成，本次同步 {} 笔新交易", token.symbol, tx_count);
+                info!("=====================================================");
             },
             Err(e) => {
                 *error_count += 1;
@@ -599,8 +609,9 @@ async fn run_application(cfg: models::Config) -> Result<(), Box<dyn Error>> {
                     // 发生多次连续错误时，等待更长时间再重试，但继续处理其他代币
                     *error_count = 0; // 重置计数
                 }
+                
+                info!("=====================================================");
             }
         }
     }
 }
-

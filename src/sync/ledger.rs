@@ -317,7 +317,7 @@ pub async fn sync_ledger_transactions(
     let status_update_frequency: usize = 100;  // 每同步100笔交易更新一次状态
     
     info!("🚀 开始增量同步交易数据，从索引 {} 开始", current_index);
-    info!("==================================================");
+    info!("=====================================================");
     
     // 尝试同步交易，每次获取一批
     while retry_count < max_retries && consecutive_empty < max_consecutive_empty {
@@ -505,7 +505,7 @@ pub async fn sync_ledger_transactions(
         info!("无新交易，保持同步状态在索引: {}", latest_index);
     }
     
-    info!("==================================================");
+    info!("=====================================================");
     info!("🏁 交易同步完成，当前索引: {}, 共同步 {} 笔新交易", current_index - 1, all_new_transactions.len());
     Ok(all_new_transactions)
 }
