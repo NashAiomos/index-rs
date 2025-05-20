@@ -1,3 +1,19 @@
+/**
+ * 文件描述: 配置管理模块，负责加载和处理应用配置
+ * 功能概述:
+ * - 从配置文件加载应用设置
+ * - 解析命令行参数
+ * - 创建IC网络连接
+ * - 获取代币信息
+ * 
+ * 主要组件:
+ * - load_config函数 (第13-49行): 从config.toml文件加载应用配置
+ * - parse_args函数 (第52-57行): 解析命令行参数(如--reset)
+ * - get_token_decimals函数 (第60-102行): 从IC网络获取代币小数位数
+ * - create_agent函数 (第105-117行): 创建IC网络连接代理
+ * - parse_canister_id函数 (第120-127行): 解析Canister ID为Principal类型
+ */
+
 use std::error::Error;
 use config as config_rs;
 use ic_agent::export::Principal;

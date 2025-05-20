@@ -22,6 +22,7 @@ src/
 ├── blockchain.rs        # 区块链交互功能
 ├── utils.rs             # 通用工具函数
 ├── config.rs            # 配置加载功能
+├── error.rs             # 错误处理模块
 ├── db/                  # 数据库相关功能
 │   ├── mod.rs           # 数据库模块入口
 │   ├── transactions.rs  # 交易数据库操作

@@ -1,3 +1,15 @@
+/**
+ * 文件描述: 代币总供应量管理模块，负责计算和存储代币总供应量
+ * 功能概述:
+ * - 计算所有账户余额总和
+ * - 更新代币总供应量
+ * - 获取存储的总供应量
+ * 
+ * 主要组件:
+ * - recalculate_total_supply函数 (第8-31行): 根据所有账户余额重新计算并保存总供应量
+ * - get_stored_total_supply函数 (第34-43行): 从数据库获取当前存储的总供应量
+ */
+
 use std::error::Error;
 use mongodb::Collection;
 use mongodb::bson::{doc, Document};
