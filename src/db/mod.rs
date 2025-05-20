@@ -7,11 +7,11 @@
  * - 提供数据库访问限流和并发控制
  * 
  * 主要组件:
- * - DbConnection结构体 (第18-33行): 包含数据库连接和各代币集合
- * - TokenCollections结构体 (第36-44行): 单个代币的所有相关集合
- * - init_db函数 (第47-93行): 初始化数据库连接，创建各代币集合
- * - create_indexes函数 (第96-157行): 创建数据库索引以优化查询性能
- * - with_db_semaphore函数 (第160-196行): 限制数据库并发操作数量的工具函数
+ * - DbConnection结构体: 包含数据库连接和各代币集合
+ * - TokenCollections结构体: 单个代币的所有相关集合
+ * - init_db函数: 初始化数据库连接，创建各代币集合
+ * - create_indexes函数: 创建数据库索引以优化查询性能
+ * - with_db_semaphore函数: 限制数据库并发操作数量的工具函数
  */
 
 use std::error::Error;
@@ -43,6 +43,7 @@ pub struct DbConnection {
 
 impl DbConnection {
     /// 获取指定代币的交易集合
+    #[allow(dead_code)]
     pub fn get_transactions_collection(&self, token_symbol: &str) -> Collection<Document> {
         if let Some(collections) = self.collections.get(token_symbol) {
             collections.tx_col.clone()

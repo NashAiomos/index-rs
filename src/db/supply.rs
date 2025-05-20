@@ -6,8 +6,8 @@
  * - 获取存储的总供应量
  * 
  * 主要组件:
- * - recalculate_total_supply函数 (第8-31行): 根据所有账户余额重新计算并保存总供应量
- * - get_stored_total_supply函数 (第34-43行): 从数据库获取当前存储的总供应量
+ * - recalculate_total_supply函数: 根据所有账户余额重新计算并保存总供应量
+ * - get_stored_total_supply函数: 从数据库获取当前存储的总供应量
  */
 
 use std::error::Error;

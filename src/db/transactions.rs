@@ -6,9 +6,9 @@
  * - 清空交易集合数据
  * 
  * 主要组件:
- * - save_transaction函数 (第10-53行): 将交易保存到数据库，支持重试机制
- * - get_latest_transaction_index函数 (第56-71行): 查询数据库中最新的交易索引
- * - clear_transactions函数 (第74-85行): 清空交易集合中的所有记录
+ * - save_transaction函数: 将交易保存到数据库，支持重试机制
+ * - get_latest_transaction_index函数: 查询数据库中最新的交易索引
+ * - clear_transactions函数: 清空交易集合中的所有记录
  */
 
 use std::error::Error;

@@ -6,13 +6,13 @@
  * - 提供同步状态的查询和更新操作
  * 
  * 主要组件:
- * - SyncStatus结构体 (第11-18行): 定义同步状态数据结构
- * - get_sync_status函数 (第21-44行): 获取指定代币的最新同步状态
- * - update_sync_status函数 (第47-88行): 更新同步状态，支持重试机制
- * - set_incremental_mode函数 (第91-97行): 设置为增量同步模式
- * - set_full_sync_mode函数 (第100-105行): 设置为全量同步模式
- * - clear_token_sync_status函数 (第108-119行): 清除指定代币的同步状态
- * - clear_sync_status函数 (第122-135行): 清除所有代币的同步状态
+ * - SyncStatus结构体: 定义同步状态数据结构
+ * - get_sync_status函数: 获取指定代币的最新同步状态
+ * - update_sync_status函数: 更新同步状态，支持重试机制
+ * - set_incremental_mode函数: 设置为增量同步模式
+ * - set_full_sync_mode函数: 设置为全量同步模式
+ * - clear_token_sync_status函数: 清除指定代币的同步状态
+ * - clear_sync_status函数: 清除所有代币的同步状态
  */
 
 use std::error::Error;

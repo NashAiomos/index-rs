@@ -8,15 +8,15 @@
  * - 支持多代币并发查询
  * 
  * 主要组件:
- * - transaction_to_bson函数 (第18-76行): 将交易对象转换为BSON格式
- * - ApiServer结构体 (第82-91行): API服务器主类
- * - QueryParams结构体 (第97-105行): 查询参数定义
- * - ApiResponse结构体 (第111-156行): 统一API响应格式
- * - ApiServer实现 (第158-360行): API服务器方法实现，包括:
+ * - transaction_to_bson函数 (第34-104行): 将交易对象转换为BSON格式
+ * - ApiServer结构体 (第106-115行): API服务器主类
+ * - QueryParams结构体 (第117-128行): 查询参数定义
+ * - ApiResponse结构体 (第130-171行): 统一API响应格式
+ * - ApiServer实现 (第173-367行): API服务器方法实现，包括:
  *   - new: 创建新实例
  *   - start: 启动API服务器
  *   - build_routes: 构建API路由
- * - 各API处理函数 (第426-951行): 实现不同API端点的具体业务逻辑
+ * - 各API处理函数 (第369-975行): 实现不同API端点的具体业务逻辑
  */
 
 use std::sync::Arc;
@@ -160,6 +160,7 @@ impl<T> ApiResponse<T> {
     }
     
     /// 创建一个自定义状态码的错误响应
+    #[allow(dead_code)]
     pub fn error_with_code(code: u16, msg: &str) -> Self {
         Self {
             code,
@@ -548,6 +549,7 @@ async fn handle_get_account_transactions(
 ///
 /// # 返回
 /// 成功时返回最新交易列表，失败时返回错误信息
+#[allow(dead_code)]
 async fn handle_get_latest_transactions(
     params: QueryParams,
     db_conn: Arc<DbConnection>,
@@ -969,4 +971,4 @@ async fn handle_search_transactions(
             Ok(warp::reply::json(&response))
         }
     }
-} 
+}

@@ -9,22 +9,22 @@
  * - 启动API服务器
  * 
  * 主要组件:
- * - main函数 (第29-67行): 程序入口点，设置日志系统和错误处理
- * - setup_logger函数 (第70-158行): 配置日志系统，设置日志输出到文件和控制台
- * - run_application函数 (第161-618行): 主应用逻辑实现，包括:
- *   - 初始化数据库和IC连接 (第170-187行)
- *   - 根据命令行参数判断是否执行重置同步 (第189-251行)
- *   - 判断各代币是否需要初始同步 (第254-340行)
- *   - 启动API服务器 (第343-363行)
- *   - 执行定时增量同步循环 (第366-618行)
+ * - main函数 (第60-108行): 程序入口点，设置日志系统和错误处理
+ * - setup_logger函数 (第110-234行): 配置日志系统，设置日志输出到文件和控制台
+ * - run_application函数 (第236-647行): 主应用逻辑实现，包括:
+ *   - 初始化数据库和IC连接 (第173-182行)
+ *   - 根据命令行参数判断是否执行重置同步 (第185-254行)
+ *   - 判断各代币是否需要初始同步 (第257-342行)
+ *   - 启动API服务器 (第345-367行)
+ *   - 执行定时增量同步循环 (第370-647行)
  */
 
-#![allow(unused_variables)]
-#![allow(improper_ctypes_definitions)]
-#![allow(improper_ctypes)]
-#![allow(non_camel_case_types)]
-#![allow(type_alias_bounds)]
-#![allow(dead_code)]
+#[allow(unused_variables)]
+#[allow(improper_ctypes_definitions)]
+#[allow(improper_ctypes)]
+#[allow(non_camel_case_types)]
+#[allow(type_alias_bounds)]
+#[allow(dead_code)]
 
 mod models;
 mod utils;
@@ -365,9 +365,17 @@ async fn run_application(cfg: models::Config) -> Result<(), Box<dyn Error>> {
         let canister_id = parse_canister_id(&token.canister_id)?;
         
         // 获取代币小数位数
-        let token_decimals = match token.decimals {
+        let _token_decimals = match token.decimals {
             Some(decimals) => decimals,
-            None => get_token_decimals(&agent, &canister_id, &token.symbol).await?
+            None => {
+                match get_token_decimals(&agent, &canister_id, &token.symbol).await {
+                    Ok(decimals) => decimals,
+                    Err(e) => {
+                        error!("{}: 获取代币小数位失败: {}", token.symbol, e);
+                        continue;
+                    }
+                }
+            }
         };
         
         if *needs_initial_sync {
@@ -382,7 +390,7 @@ async fn run_application(cfg: models::Config) -> Result<(), Box<dyn Error>> {
                 &collections.accounts_col,
                 &collections.balances_col,
                 &collections.total_supply_col,
-                token_decimals,
+                _token_decimals,
                 false // 不计算余额
             ).await?;
             
@@ -434,7 +442,7 @@ async fn run_application(cfg: models::Config) -> Result<(), Box<dyn Error>> {
             }
             
             info!("{}: 初始同步和余额计算完成", token.symbol);
-            info!("=====================================================");
+            info!("============================================");
         } else if let Ok(Some(status)) = sync_status {
             // 检查是否需要验证同步状态的完整性
             info!("{}: 从断点继续同步，验证同步状态的完整性...", token.symbol);
@@ -537,8 +545,8 @@ async fn run_application(cfg: models::Config) -> Result<(), Box<dyn Error>> {
             tokio::time::sleep(token_rotation_delay).await;
         }
         
-        // 分割线与开始信息
-        info!("=====================================================");
+        // 开始信息 - 使用更整洁的格式
+        info!("============================================");
         info!("🚀 开始增量同步代币: {}", token.symbol);
         
         debug!("{}: 执行定时增量同步...", token.symbol);
@@ -562,7 +570,7 @@ async fn run_application(cfg: models::Config) -> Result<(), Box<dyn Error>> {
         };
         
         // 获取代币小数位数
-        let token_decimals = match token.decimals {
+        let _token_decimals = match token.decimals {
             Some(decimals) => decimals,
             None => {
                 match get_token_decimals(&agent, &canister_id, &token.symbol).await {
@@ -619,7 +627,7 @@ async fn run_application(cfg: models::Config) -> Result<(), Box<dyn Error>> {
                 
                 // 结束信息
                 info!("🏁 代币 {} 增量同步完成，本次同步 {} 笔新交易", token.symbol, tx_count);
-                info!("=====================================================");
+                info!("============================================");
             },
             Err(e) => {
                 *error_count += 1;
@@ -631,7 +639,7 @@ async fn run_application(cfg: models::Config) -> Result<(), Box<dyn Error>> {
                     *error_count = 0; // 重置计数
                 }
                 
-                info!("=====================================================");
+                info!("============================================");
             }
         }
     }
