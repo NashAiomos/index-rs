@@ -1,3 +1,24 @@
+/**
+ * 文件描述: API服务器实现，提供区块链数据查询RESTful接口
+ * 功能概述:
+ * - 提供代币余额查询API
+ * - 提供交易历史查询API
+ * - 提供账户信息查询API
+ * - 提供数据统计API
+ * - 支持多代币并发查询
+ * 
+ * 主要组件:
+ * - transaction_to_bson函数 (第18-76行): 将交易对象转换为BSON格式
+ * - ApiServer结构体 (第82-91行): API服务器主类
+ * - QueryParams结构体 (第97-105行): 查询参数定义
+ * - ApiResponse结构体 (第111-156行): 统一API响应格式
+ * - ApiServer实现 (第158-360行): API服务器方法实现，包括:
+ *   - new: 创建新实例
+ *   - start: 启动API服务器
+ *   - build_routes: 构建API路由
+ * - 各API处理函数 (第426-951行): 实现不同API端点的具体业务逻辑
+ */
+
 use std::sync::Arc;
 use warp::{Filter, Rejection, Reply};
 use warp::filters::BoxedFilter;

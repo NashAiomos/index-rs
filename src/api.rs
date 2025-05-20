@@ -1,3 +1,25 @@
+/**
+ * 文件描述: API数据访问模块，提供区块链数据查询功能
+ * 功能概述:
+ * - 查询账户余额
+ * - 查询交易历史
+ * - 搜索交易记录
+ * - 获取统计数据
+ * 
+ * 主要组件:
+ * - get_account_balance函数 (第15-31行): 查询账户余额
+ * - get_account_transactions函数 (第34-91行): 查询账户的交易历史
+ * - get_transaction_by_index函数 (第94-110行): 查询特定交易详情
+ * - get_latest_transactions函数 (第113-140行): 获取最新的交易记录
+ * - get_latest_transaction_index函数 (第143-158行): 获取最新的交易索引
+ * - search_transactions函数 (第161-191行): 多条件查询交易
+ * - get_all_accounts函数 (第194-221行): 获取所有账户列表
+ * - get_total_supply函数 (第224-231行): 获取代币总供应量
+ * - get_transaction_count函数 (第234-241行): 统计交易总数
+ * - get_account_count函数 (第244-251行): 统计账户总数
+ * - get_active_accounts函数 (第254-323行): 获取活跃账户列表
+ */
+
 use std::error::Error;
 use mongodb::Collection;
 use mongodb::bson::{doc, Document};

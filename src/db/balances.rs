@@ -1,3 +1,22 @@
+/**
+ * 文件描述: 余额管理模块，负责计算和管理账户余额
+ * 功能概述:
+ * - 计算账户余额
+ * - 处理余额更新
+ * - 检测和记录余额异常
+ * - 支持全量和增量余额计算
+ * 
+ * 主要组件:
+ * - get_account_balance函数 (第30-44行): 获取指定账户的余额
+ * - calculate_all_balances函数 (第63-157行): 全量计算所有账户余额
+ * - calculate_incremental_balances函数 (第161-271行): 增量计算受影响账户的余额
+ * - calculate_account_balance函数 (第274-575行): 根据交易历史计算单个账户余额
+ * - safe_subtract_balance_with_logging函数 (第577-617行): 安全扣减余额并记录异常
+ * - log_balance_anomaly函数 (第619-637行): 记录余额异常
+ * - save_account_balance函数 (第693-736行): 保存账户余额
+ * - normalize_account_id函数 (第739-756行): 规范化账户ID格式
+ */
+
 use std::error::Error;
 use std::sync::Arc;
 use std::collections::HashMap;

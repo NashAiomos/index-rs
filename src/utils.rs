@@ -1,3 +1,16 @@
+/**
+ * 文件描述: 工具函数模块，提供通用工具函数
+ * 功能概述:
+ * - 格式化代币金额
+ * - 处理交易数据
+ * - 创建错误对象
+ * 
+ * 主要组件:
+ * - format_token_amount函数 (第7-28行): 格式化代币金额为人类可读形式，添加小数点
+ * - group_transactions_by_account函数 (第31-60行): 将交易按关联账户分组
+ * - create_error函数 (第63-65行): 创建标准错误对象
+ */
+
 use std::error::Error;
 use std::collections::HashMap;
 use candid::Nat;

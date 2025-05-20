@@ -1,3 +1,19 @@
+/**
+ * 文件描述: 数据库模块，提供MongoDB连接和集合管理功能
+ * 功能概述:
+ * - 初始化MongoDB连接
+ * - 创建和管理代币相关的集合
+ * - 创建数据库索引
+ * - 提供数据库访问限流和并发控制
+ * 
+ * 主要组件:
+ * - DbConnection结构体 (第18-33行): 包含数据库连接和各代币集合
+ * - TokenCollections结构体 (第36-44行): 单个代币的所有相关集合
+ * - init_db函数 (第47-93行): 初始化数据库连接，创建各代币集合
+ * - create_indexes函数 (第96-157行): 创建数据库索引以优化查询性能
+ * - with_db_semaphore函数 (第160-196行): 限制数据库并发操作数量的工具函数
+ */
+
 use std::error::Error;
 use std::sync::Arc;
 use std::collections::HashMap;
