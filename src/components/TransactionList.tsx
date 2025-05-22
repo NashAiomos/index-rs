@@ -49,12 +49,9 @@ const TransactionList: React.FC<TransactionListProps> = ({ transactions, loading
   }
 
   return (
-    <div className="bg-white rounded-lg shadow-md p-6 w-full">
+    <div className="bg-white rounded-lg shadow-md p-6">
       <div className="flex justify-between items-center mb-4">
         <h2 className="text-xl font-semibold text-gray-800">Latest Transactions</h2>
-        <Link to="/transactions" className="text-blue-500 hover:text-blue-700 text-sm">
-          View All Transactions
-        </Link>
       </div>
       
       <div className="overflow-x-auto">
@@ -62,7 +59,10 @@ const TransactionList: React.FC<TransactionListProps> = ({ transactions, loading
           <thead className="bg-gray-50">
             <tr>
               <th scope="col" className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                Transaction Hash
+                Index
+              </th>
+              <th scope="col" className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                Type
               </th>
               <th scope="col" className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                 Time
@@ -74,10 +74,7 @@ const TransactionList: React.FC<TransactionListProps> = ({ transactions, loading
                 To
               </th>
               <th scope="col" className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                Value
-              </th>
-              <th scope="col" className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                Token
+                Amount
               </th>
             </tr>
           </thead>
@@ -88,6 +85,9 @@ const TransactionList: React.FC<TransactionListProps> = ({ transactions, loading
                   <Link to={`/transaction/${tx.hash}`} className="text-blue-500 hover:text-blue-700">
                     {formatAddress(tx.hash)}
                   </Link>
+                </td>
+                <td className="px-4 py-3 whitespace-nowrap text-sm text-gray-500">
+                  {tx.token}
                 </td>
                 <td className="px-4 py-3 whitespace-nowrap text-sm text-gray-500">
                   {formatTime(tx.time)}
@@ -104,9 +104,6 @@ const TransactionList: React.FC<TransactionListProps> = ({ transactions, loading
                 </td>
                 <td className="px-4 py-3 whitespace-nowrap text-sm text-gray-900 font-medium">
                   {tx.value}
-                </td>
-                <td className="px-4 py-3 whitespace-nowrap text-sm text-gray-500">
-                  {tx.token}
                 </td>
               </tr>
             ))}

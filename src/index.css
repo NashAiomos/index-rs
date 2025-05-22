@@ -35,13 +35,13 @@ code {
 
 @media (min-width: 1024px) {
   .container {
-    max-width: 1024px;
+    max-width: 96%;
   }
 }
 
 @media (min-width: 1280px) {
   .container {
-    max-width: 1280px;
+    max-width: 97%;
   }
 }
 
@@ -251,6 +251,10 @@ code {
   gap: 1.5rem;
 }
 
+.gap-40 {
+  gap: 10rem;
+}
+
 .grid-cols-1 {
   grid-template-columns: repeat(1, minmax(0, 1fr));
 }
@@ -432,12 +436,14 @@ code {
   }
 }
 
-/* 自定义卡片网格样式 */
 .token-card-flex {
   display: flex;
-  grid-template-columns: repeat(1, minmax(0, 1fr));
   gap: 0;
   margin-bottom: 2rem;
+  flex-direction: row;
+  flex-wrap: nowrap;
+  justify-content: space-evenly;
+  align-items: stretch;
 }
 
 @media (min-width: 768px) {
