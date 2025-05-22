@@ -20,16 +20,6 @@ name = "LIKE"
 canister_id = "spdsf-5yaaa-aaaam-adcnq-cai"
 decimals = 6
 
-[[tokens]]
-symbol = "ICS"
-name = "ICS"
-canister_id = "ca6gz-lqaaa-aaaaq-aacwa-cai"
-
-[[tokens]]
-symbol = "DCD"
-name = "DCD"
-canister_id = "xsi2v-cyaaa-aaaaq-aabfq-cai"
-
 # 日志配置
 [log]
 # 日志级别: error, warn, info, debug, trace
