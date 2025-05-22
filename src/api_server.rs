@@ -281,7 +281,7 @@ impl ApiServer {
             .and(with_db(db_conn.clone()))
             .and(warp::any().map(move || tokens_for_latest.clone()))
             .and_then(|params, db, tokens| async move {
-                handle_get_transaction_count(params, db, tokens).await
+                handle_get_latest_transactions(params, db, tokens).await
             });
 
         // 获取交易总数
