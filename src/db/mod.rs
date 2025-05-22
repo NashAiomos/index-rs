@@ -161,6 +161,12 @@ pub async fn create_indexes(conn: &DbConnection) -> Result<(), Box<dyn Error>> {
     }
     
     // 同步状态索引
+    // 在创建新索引前清除旧的索引，避免重复键错误
+    match conn.sync_status_col.drop_indexes(None).await {
+        Ok(_) => info!("同步状态集合旧索引已清除"),
+        Err(e) => error!("同步状态集合清除旧索引失败: {}", e)
+    }
+    
     match conn.sync_status_col.create_index(
         mongodb::IndexModel::builder()
             .keys(mongodb::bson::doc! { "status_type": 1, "token": 1 })

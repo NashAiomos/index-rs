@@ -27,12 +27,12 @@ use crate::utils::create_error;
 #[derive(Debug, Clone)]
 #[allow(dead_code)]
 pub struct SyncStatus {
-    pub token: String,          // 代币标识符
+    pub token: String, // 代币标识符
     pub last_synced_index: u64,
     pub last_synced_timestamp: u64,
-    pub last_balance_calculated_index: u64, // 新增：余额已计算到的最新交易索引
+    pub last_balance_calculated_index: u64,
     pub updated_at: i64,
-    pub sync_mode: String,      // "full" 或 "incremental"
+    pub sync_mode: String, // "full" 或 "incremental"
 }
 
 /// 获取指定代币的最新同步状态
