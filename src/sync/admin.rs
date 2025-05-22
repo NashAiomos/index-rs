@@ -105,7 +105,7 @@ pub async fn reset_and_sync_all_transactions(
         canister_id,
         &collections.tx_col,
         &collections.accounts_col,
-        &collections.balances_col,
+        &db_conn.sync_status_col,
         &collections.total_supply_col,
         token_config,
         true // 计算余额

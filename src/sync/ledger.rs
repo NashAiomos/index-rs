@@ -335,7 +335,7 @@ pub async fn sync_ledger_transactions(
     let mut last_status_update_index = latest_index;
     let status_update_frequency: usize = 100;  // 每同步100笔交易更新一次状态
     
-    info!("🚀 开始增量同步交易数据，从索引 {} 开始", current_index);
+    info!("开始增量同步交易数据，从索引 {} 开始", current_index);
     
     // 尝试同步交易，每次获取一批
     while retry_count < max_retries && consecutive_empty < max_consecutive_empty {
@@ -438,9 +438,6 @@ pub async fn sync_ledger_transactions(
                 info!("成功保存 {} 笔交易，失败 {} 笔", success_count, error_count);
                 info!("✅ 交易批次处理完成: {}～{}", current_index, current_index + transactions.len() as u64 - 1);
                 
-                // 不再需要在此处计算余额，由新算法统一计算
-                debug!("跳过余额计算（将使用增量余额计算算法）");
-                
                 // 更新当前索引并重置重试计数
                 current_index += transactions.len() as u64;
                 retry_count = 0;
@@ -523,6 +520,6 @@ pub async fn sync_ledger_transactions(
         info!("无新交易，保持同步状态在索引: {}", latest_index);
     }
     
-    info!("🏁 交易同步完成，当前索引: {}, 共同步 {} 笔新交易", current_index - 1, all_new_transactions.len());
+    info!("交易同步完成，当前索引: {}, 共同步 {} 笔新交易", latest_tx_index, all_new_transactions.len());
     Ok(all_new_transactions)
 }

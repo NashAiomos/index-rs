@@ -401,7 +401,7 @@ async fn run_application(cfg: models::Config) -> Result<(), Box<dyn Error>> {
                 &canister_id,
                 &collections.tx_col,
                 &collections.accounts_col,
-                &collections.balances_col,
+                &db_conn.sync_status_col,
                 &collections.total_supply_col,
                 &token,
                 false // 不计算余额
@@ -638,11 +638,11 @@ async fn run_application(cfg: models::Config) -> Result<(), Box<dyn Error>> {
         
         // 增量同步交易数据
         match sync_ledger_transactions(
-            &agent, 
-            &canister_id, 
-            &collections.tx_col, 
-            &collections.accounts_col, 
-            &collections.balances_col, 
+            &agent,
+            &canister_id,
+            &collections.tx_col,
+            &collections.accounts_col,
+            &db_conn.sync_status_col,
             &collections.total_supply_col,
             &token,
             false // 增量同步时不再实时计算余额
