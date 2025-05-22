@@ -18,6 +18,7 @@
  * - get_transaction_count函数 (第266-275行): 统计交易总数
  * - get_account_count函数 (第277-286行): 统计账户总数
  * - get_active_accounts函数 (第288-347行): 获取活跃账户列表
+ * - get_transactions_by_index_range函数 (第350-396行): 按索引范围批量获取交易
  */
 
 use std::error::Error;
@@ -30,6 +31,7 @@ use crate::db::balances::normalize_account_id;
 use futures::stream::TryStreamExt;
 use mongodb::options::FindOneOptions;
 use crate::db::supply;
+use crate::db::transactions as tx_db;
 
 /// API模块，提供所有对外查询功能
 /// 包括地址、交易和余额的相关查询
@@ -343,4 +345,52 @@ pub async fn get_active_accounts(
     let active_accounts: Vec<String> = accounts.into_iter().collect();
     
     Ok(active_accounts)
+}
+
+/// 根据索引范围批量获取交易
+/// 
+/// # 参数
+/// * `tx_col` - 交易集合
+/// * `start_index` - 起始索引
+/// * `end_index` - 结束索引
+/// * `limit` - 最大返回条数，None 则默认为 300
+/// 
+/// # 返回
+/// 返回符合条件的交易列表，最多 300 条
+pub async fn get_transactions_by_index_range(
+    tx_col: &Collection<Document>,
+    start_index: u64,
+    end_index: u64,
+    limit: Option<i64>,
+) -> Result<Vec<Transaction>, Box<dyn Error>> {
+    // 最大允许返回 300 条
+    const MAX_LIMIT: i64 = 300;
+    let limit_val = limit.unwrap_or(MAX_LIMIT).min(MAX_LIMIT);
+
+    // 计算真正的查询范围（确保 start <= end）
+    let (start, end) = if start_index <= end_index {
+        (start_index, end_index)
+    } else {
+        (end_index, start_index)
+    };
+
+    debug!(
+        "批量查询交易，范围: {} - {}, 请求限制: {}",
+        start_index, end_index, limit_val
+    );
+
+    // 调用数据库模块查询
+    let mut txs = tx_db::get_transactions_by_index_range(tx_col, start, end).await?;
+
+    // 如果原始 start_index 大于 end_index，则按降序返回
+    if start_index > end_index {
+        txs.reverse();
+    }
+
+    // 截断结果至 limit
+    if txs.len() as i64 > limit_val {
+        txs.truncate(limit_val as usize);
+    }
+
+    Ok(txs)
 }
