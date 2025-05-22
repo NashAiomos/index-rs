@@ -326,6 +326,35 @@ cors_enabled = true
   GET /api/latest_transactions?limit=5&token=VUSD
   ```
 
+#### GET /api/transactions_by_range/{start}/{end}
+- 路径参数：
+  - `start` (u64)：起始索引
+  - `end` (u64)：结束索引
+- 查询参数（可选）：
+  - `token` (String)：代币符号，默认为配置的第一个代币
+  - `limit` (i64)：返回记录数，默认 `300`，上限 `300`
+- 描述：批量获取指定索引区间（闭区间）的交易列表；若 `start > end`，结果按降序返回。
+- 示例请求：
+  ```
+  GET /api/transactions_by_range/25000/24900?limit=100&token=VUSD
+  ```
+- 示例响应（截断）：
+  ```json
+  {
+    "code": 200,
+    "data": {
+      "start": 25000,
+      "end": 24900,
+      "count": 100,
+      "transactions": [
+        { "index": 25000, "kind": "transfer", "timestamp": 1716342900 },
+        { "index": 24999, "kind": "transfer", "timestamp": 1716342890 }
+      ]
+    },
+    "error": null
+  }
+  ```
+
 #### GET /api/tx_count
 - 查询参数（可选）：
   - `token` (String)：代币符号，默认为配置的第一个代币

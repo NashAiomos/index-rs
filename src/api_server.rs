@@ -350,6 +350,17 @@ impl ApiServer {
                 handle_search_transactions(query, db, tokens).await
             });
 
+        // 根据索引范围批量获取交易
+        let tokens_for_range = self.tokens.clone();
+        let transactions_by_range = warp::path!("api" / "transactions_by_range" / u64 / u64)
+            .and(warp::get())
+            .and(warp::query::<QueryParams>())
+            .and(with_db(db_conn.clone()))
+            .and(warp::any().map(move || tokens_for_range.clone()))
+            .and_then(|start, end, params, db, tokens| async move {
+                handle_get_transactions_by_range(start, end, params, db, tokens).await
+            });
+
         // 合并所有路由
         supported_tokens
             .or(balance)
@@ -362,6 +373,7 @@ impl ApiServer {
             .or(accounts)
             .or(active_accounts)
             .or(search)
+            .or(transactions_by_range)
             .boxed()
     }
 }
@@ -968,6 +980,71 @@ async fn handle_search_transactions(
         Err(e) => {
             let response = ApiResponse::<Vec<String>>::error(&e.to_string());
             error!("API响应错误: 高级搜索交易 - 查询条件: {:?}, error: {}", query, e);
+            Ok(warp::reply::json(&response))
+        }
+    }
+}
+
+// 处理函数：根据索引范围批量获取交易
+async fn handle_get_transactions_by_range(
+    start: u64,
+    end: u64,
+    params: QueryParams,
+    db_conn: Arc<DbConnection>,
+    tokens: Vec<crate::models::TokenConfig>,
+) -> Result<impl Reply, Rejection> {
+    info!("API响应: 获取交易列表 - start: {}, end: {}", start, end);
+    
+    // 获取查询参数中的token或者默认第一个代币
+    let token_symbol = params.token.as_deref();
+    let token = match token_symbol {
+        Some(symbol) => tokens.iter().find(|t| t.symbol == symbol),
+        None => tokens.first()
+    };
+    
+    // 如果找不到代币，返回错误
+    let token = match token {
+        Some(t) => t,
+        None => {
+            let msg = match token_symbol {
+                Some(s) => format!("未找到指定的代币: {}", s),
+                None => "系统未配置任何代币".to_string()
+            };
+            error!("API错误: {}", msg);
+            return Ok(warp::reply::json(&ApiResponse::<Vec<String>>::error(&msg)));
+        }
+    };
+    
+    // 从数据库中获取该代币的集合
+    let collections = match db_conn.collections.get(&token.symbol) {
+        Some(cols) => cols,
+        None => {
+            let msg = format!("未找到代币 {} 的数据库集合", token.symbol);
+            error!("API错误: {}", msg);
+            return Ok(warp::reply::json(&ApiResponse::<Vec<String>>::error(&msg)));
+        }
+    };
+    
+    match api::get_transactions_by_index_range(&collections.tx_col, start, end, params.limit).await {
+        Ok(transactions) => {
+            // 将Transaction对象转换为可序列化的文档
+            let tx_docs: Vec<Document> = transactions.iter()
+                .map(|tx| transaction_to_bson(tx, &token.symbol, &token.name))
+                .collect();
+            
+            let response = ApiResponse::success(doc! {
+                "start": start,
+                "end": end,
+                "transactions": tx_docs,
+                "count": (transactions.len() as i64),
+            });
+            info!("API响应成功: 获取交易列表 - start: {}, end: {}, count: {}", 
+                  start, end, transactions.len());
+            Ok(warp::reply::json(&response))
+        },
+        Err(e) => {
+            let response = ApiResponse::<Vec<String>>::error(&e.to_string());
+            error!("API响应错误: 获取交易列表 - start: {}, end: {}, error: {}", start, end, e);
             Ok(warp::reply::json(&response))
         }
     }
