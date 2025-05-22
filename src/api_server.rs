@@ -92,11 +92,83 @@ fn transaction_to_bson(tx: &Transaction, token_symbol: &str, token_name: &str) -
         if let Some(mint) = &tx.mint {
             doc.insert("to", mint.to.to_string());
             doc.insert("amount", mint.amount.to_string());
+
+            // 可选字段
+            if let Some(memo) = &mint.memo {
+                let hex_memo = memo.iter()
+                    .map(|b| format!("{:02x}", b))
+                    .collect::<String>();
+                doc.insert("memo", hex_memo);
+
+                if let Ok(text) = String::from_utf8(memo.clone()) {
+                    if !text.trim().is_empty() && text.chars().all(|c| !c.is_control() || c == '\n' || c == '\t') {
+                        doc.insert("memo_text", text);
+                    }
+                }
+            }
+            if let Some(created_at_time) = mint.created_at_time {
+                doc.insert("created_at_time", mongodb::bson::Bson::Int64(created_at_time as i64));
+            }
         }
     } else if tx.kind == "burn" {
         if let Some(burn) = &tx.burn {
             doc.insert("from", burn.from.to_string());
             doc.insert("amount", burn.amount.to_string());
+
+            if let Some(spender) = &burn.spender {
+                doc.insert("spender", spender.to_string());
+            }
+
+            if let Some(memo) = &burn.memo {
+                let hex_memo = memo.iter()
+                    .map(|b| format!("{:02x}", b))
+                    .collect::<String>();
+                doc.insert("memo", hex_memo);
+
+                if let Ok(text) = String::from_utf8(memo.clone()) {
+                    if !text.trim().is_empty() && text.chars().all(|c| !c.is_control() || c == '\n' || c == '\t') {
+                        doc.insert("memo_text", text);
+                    }
+                }
+            }
+
+            if let Some(created_at_time) = burn.created_at_time {
+                doc.insert("created_at_time", mongodb::bson::Bson::Int64(created_at_time as i64));
+            }
+        }
+    } else if tx.kind == "approve" {
+        if let Some(approve) = &tx.approve {
+            doc.insert("from", approve.from.to_string());
+            doc.insert("spender", approve.spender.to_string());
+            doc.insert("amount", approve.amount.to_string());
+
+            // 可选字段
+            if let Some(fee) = &approve.fee {
+                doc.insert("fee", fee.to_string());
+            } else {
+                doc.insert("fee", "0");
+            }
+            if let Some(expected) = &approve.expected_allowance {
+                doc.insert("expected_allowance", expected.to_string());
+            }
+            if let Some(expires_at) = approve.expires_at {
+                doc.insert("expires_at", mongodb::bson::Bson::Int64(expires_at as i64));
+            }
+            if let Some(memo) = &approve.memo {
+                let hex_memo = memo.iter()
+                    .map(|b| format!("{:02x}", b))
+                    .collect::<String>();
+                doc.insert("memo", hex_memo);
+
+                if let Ok(text) = String::from_utf8(memo.clone()) {
+                    if !text.trim().is_empty() && text.chars().all(|c| !c.is_control() || c == '\n' || c == '\t') {
+                        doc.insert("memo_text", text);
+                    }
+                }
+            }
+            if let Some(created_at_time) = approve.created_at_time {
+                doc.insert("created_at_time", mongodb::bson::Bson::Int64(created_at_time as i64));
+            }
         }
     }
     
