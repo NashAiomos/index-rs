@@ -52,9 +52,6 @@ const TransactionList: React.FC<TransactionListProps> = ({ transactions, loading
     <div className="bg-white rounded-lg shadow-md p-6">
       <div className="flex justify-between items-center mb-4">
         <h2 className="text-xl font-semibold text-gray-800">Latest Transactions</h2>
-        <Link to="/transactions" className="text-blue-500 hover:text-blue-700 text-sm">
-          View All Transactions
-        </Link>
       </div>
       
       <div className="overflow-x-auto">

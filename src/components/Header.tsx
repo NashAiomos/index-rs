@@ -16,7 +16,10 @@ const Header: React.FC = () => {
     <header className="bg-white shadow-sm">
       <div className="container mx-auto px-4 py-4">
         <div className="flex flex-col md:flex-row justify-between items-center">
-          <h1 className="text-2xl font-bold text-gray-800 mb-4 md:mb-0">
+          <h1
+            className="text-2xl font-bold text-gray-800 mb-4 md:mb-0 cursor-pointer"
+            onClick={() => navigate('/')}
+          >
             Vly Explorer
           </h1>
           
