@@ -53,15 +53,29 @@ export const getBalance = async (account: string, token?: string) => {
 };
 
 // 获取最新交易
-export const getLatestTransactions = async (token?: string, limit: number = 20) => {
+export const getLatestTransaction = async (token?: string) => {
   const paramToken = token?.toUpperCase();
   try {
     const response = await api.get('/latest_transactions', {
-      params: { token: paramToken, limit }
+      params: { token: paramToken, limit: 1 }
+    });
+    return response.data.data?.[0] || null;
+  } catch (error) {
+    console.error(`获取${token || ''}最新交易失败:`, error);
+    return null;
+  }
+};
+
+// 获取最新交易列表
+export const getLatestTransactions = async (token?: string, limit: number = 20, offset: number = 0) => {
+  const paramToken = token?.toUpperCase();
+  try {
+    const response = await api.get('/latest_transactions', {
+      params: { token: paramToken, limit, offset }
     });
     return response.data.data || [];
   } catch (error) {
-    console.error(`获取${token || ''}最新交易失败:`, error);
+    console.error(`获取${token || ''}最新交易列表失败:`, error);
     return [];
   }
 };
@@ -121,4 +135,18 @@ export const search = async (query: string, token?: string) => {
   }
   
   return { type: 'error', message: '搜索格式无效' };
+};
+
+// 按范围获取交易
+export const getTransactionsByRange = async (start: number, end: number, token?: string) => {
+  const paramToken = token?.toUpperCase();
+  try {
+    const response = await api.get(`/transactions_by_range/${start}/${end}`, {
+      params: { token: paramToken }
+    });
+    return response.data.data || { transactions: [] };
+  } catch (error) {
+    console.error(`获取${token || ''}交易范围数据失败:`, error);
+    return { transactions: [] };
+  }
 }; 

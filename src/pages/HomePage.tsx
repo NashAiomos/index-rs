@@ -3,7 +3,7 @@ import Header from '../components/Header';
 import TokenCard from '../components/TokenCard';
 import TransactionList from '../components/TransactionList';
 import { getLatestTransactions, getAccountCount, getTransactionCount, getTotalSupply } from '../services/api';
-import { Transaction } from '../types';
+import { Transaction, VUSDTransaction } from '../types';
 import { Link } from 'react-router-dom';
 
 const HomePage: React.FC = () => {
@@ -73,15 +73,30 @@ const HomePage: React.FC = () => {
       
       // 处理交易列表
       if (likeTxs.status === 'fulfilled' && Array.isArray(likeTxs.value)) {
-        // 转换为前端所需格式
-        const formattedTxs = likeTxs.value.map((tx: any) => ({
-          hash: tx.hash || tx.index?.toString() || '',
-          time: tx.timestamp ? new Date(tx.timestamp * 1000).toISOString() : '',
-          from: tx.from || '',
-          to: tx.to || '',
-          value: tx.value || tx.amount || '0',
-          token: tx.token || 'LIKE'
-        }));
+        // 处理LIKE交易数据
+        const formattedTxs = likeTxs.value.map((tx: any) => {
+          let timeString = '';
+          try {
+            // 检查时间戳格式，避免无效值导致的错误
+            if (tx.timestamp) {
+              const timestamp = Number(tx.timestamp);
+              if (!isNaN(timestamp) && isFinite(timestamp)) {
+                timeString = new Date(timestamp * 1000).toISOString();
+              }
+            }
+          } catch (e) {
+            console.warn('Invalid timestamp format:', tx.timestamp);
+          }
+          
+          return {
+            hash: tx.hash || tx.index?.toString() || '',
+            time: timeString,
+            from: tx.from || '',
+            to: tx.to || '',
+            value: tx.value || tx.amount || '0',
+            token: tx.token || 'LIKE'
+          };
+        });
         
         latestDataRef.current.transactions = formattedTxs;
       }
