@@ -30,6 +30,7 @@ pub struct SyncStatus {
     pub token: String,          // 代币标识符
     pub last_synced_index: u64,
     pub last_synced_timestamp: u64,
+    pub last_balance_calculated_index: u64, // 新增：余额已计算到的最新交易索引
     pub updated_at: i64,
     pub sync_mode: String,      // "full" 或 "incremental"
 }
@@ -48,6 +49,8 @@ pub async fn get_sync_status(
         let last_synced_timestamp = doc.get_i64("last_synced_timestamp")
             .unwrap_or(0) as u64;
         let updated_at = doc.get_i64("updated_at").unwrap_or(0);
+        let last_balance_calculated_index = doc.get_i64("last_balance_calculated_index")
+            .unwrap_or(0) as u64;
         let sync_mode = doc.get_str("sync_mode")
             .unwrap_or("incremental")
             .to_string();
@@ -56,6 +59,7 @@ pub async fn get_sync_status(
             token: token_symbol.to_string(),
             last_synced_index,
             last_synced_timestamp,
+            last_balance_calculated_index,
             updated_at,
             sync_mode,
         }));
@@ -162,6 +166,35 @@ pub async fn clear_sync_status(
         Err(e) => {
             error!("清除所有同步状态记录失败: {}", e);
             Err(create_error(&format!("清除所有同步状态记录失败: {}", e)))
+        }
+    }
+}
+
+/// 更新余额已计算到的最新交易索引
+pub async fn update_balance_calculated_index(
+    sync_status_col: &Collection<Document>,
+    token_symbol: &str,
+    last_balance_calculated_index: u64,
+) -> Result<(), Box<dyn Error>> {
+    let now = Utc::now().timestamp();
+
+    match sync_status_col.update_one(
+        doc! { "status_type": "sync_state", "token": token_symbol },
+        doc! {
+            "$set": {
+                "last_balance_calculated_index": last_balance_calculated_index as i64,
+                "updated_at": now,
+            }
+        },
+        mongodb::options::UpdateOptions::builder().upsert(true).build()
+    ).await {
+        Ok(_) => {
+            info!("{}: 已更新余额计算进度到索引 {}", token_symbol, last_balance_calculated_index);
+            Ok(())
+        },
+        Err(e) => {
+            error!("{}: 更新余额计算进度失败: {}", token_symbol, e);
+            Err(create_error(&format!("{}: 更新余额计算进度失败: {}", token_symbol, e)))
         }
     }
 }

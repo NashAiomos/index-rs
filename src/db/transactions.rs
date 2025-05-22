@@ -18,6 +18,8 @@ use log::{info, error, warn};
 use tokio::time::Duration;
 use crate::models::Transaction;
 use crate::utils::create_error;
+use mongodb::options::FindOptions;
+use std::convert::TryFrom;
 
 /// 保存交易到交易集合
 pub async fn save_transaction(
@@ -97,4 +99,42 @@ pub async fn clear_transactions(tx_col: &Collection<Document>) -> Result<u64, Bo
             Err(create_error(&format!("清除交易集合失败: {}", e)))
         }
     }
+}
+
+/// 根据索引范围获取交易
+pub async fn get_transactions_by_index_range(
+    tx_col: &Collection<Document>,
+    start_index: u64,
+    end_index: u64,
+) -> Result<Vec<Transaction>, Box<dyn Error>> {
+    if start_index > end_index {
+        return Ok(Vec::new());
+    }
+
+    let filter = doc! {
+        "index": {
+            "$gte": start_index as i64,
+            "$lte": end_index as i64
+        }
+    };
+    let options = FindOptions::builder()
+        .sort(doc! { "index": 1 })
+        .build();
+
+    let mut cursor = tx_col.find(filter, options).await?;
+    let mut result = Vec::new();
+
+    while cursor.advance().await? {
+        let raw_doc = cursor.current();
+        let doc = Document::try_from(raw_doc.to_owned())?;
+        match mongodb::bson::from_document::<Transaction>(doc) {
+            Ok(tx) => result.push(tx),
+            Err(e) => {
+                warn!("反序列化交易失败: {}", e);
+                continue;
+            }
+        }
+    }
+
+    Ok(result)
 }
