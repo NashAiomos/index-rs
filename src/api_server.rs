@@ -1033,8 +1033,8 @@ async fn handle_get_transactions_by_range(
                 .collect();
             
             let response = ApiResponse::success(doc! {
-                "start": start,
-                "end": end,
+                "start": (start as i64),
+                "end": (end as i64),
                 "transactions": tx_docs,
                 "count": (transactions.len() as i64),
             });
