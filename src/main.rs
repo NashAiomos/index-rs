@@ -53,8 +53,8 @@ use crate::db::{init_db, create_indexes};
 use crate::sync::{sync_ledger_transactions, sync_archive_transactions};
 use crate::sync::admin::reset_and_sync_all_transactions;
 use crate::db::balances::calculate_incremental_balances;
-use crate::db::sync_status::{get_sync_status, set_incremental_mode};
-use crate::db::transactions::get_latest_transaction_index;
+use crate::db::sync_status::{get_sync_status, set_incremental_mode, update_balance_calculated_index};
+use crate::db::transactions::{get_latest_transaction_index, get_transactions_by_index_range};
 use chrono;
 
 #[tokio::main]
@@ -426,6 +426,15 @@ async fn run_application(cfg: models::Config) -> Result<(), Box<dyn Error>> {
                 error!("{}: 计算余额时出错: {}", token.symbol, e);
             }
             
+            // 全量余额计算完成后，记录余额计算进度
+            if let Some(last_tx) = ledger_txs.last() {
+                if let Some(index) = last_tx.index {
+                    if let Err(e) = update_balance_calculated_index(&db_conn.sync_status_col, &token.symbol, index).await {
+                        warn!("{}: 记录余额计算进度失败: {}", token.symbol, e);
+                    }
+                }
+            }
+            
             // 设置增量同步模式
             if !ledger_txs.is_empty() {
                 if let Some(last_tx) = ledger_txs.last() {
@@ -586,6 +595,47 @@ async fn run_application(cfg: models::Config) -> Result<(), Box<dyn Error>> {
         // 访问或初始化该代币的连续错误计数
         let error_count = consecutive_errors.entry(token.symbol.clone()).or_insert(0);
         
+        // 在进行增量同步前，检查是否存在尚未计算余额的已同步交易
+        if let Ok(Some(status)) = get_sync_status(&db_conn.sync_status_col, &token.symbol).await {
+            if status.last_balance_calculated_index < status.last_synced_index {
+                let pending_start = status.last_balance_calculated_index + 1;
+                let pending_end = status.last_synced_index;
+                info!("{}: 发现未计算余额的交易区间 [{}-{}]，开始补算...", token.symbol, pending_start, pending_end);
+
+                match get_transactions_by_index_range(&collections.tx_col, pending_start, pending_end).await {
+                    Ok(pending_txs) if !pending_txs.is_empty() => {
+                        match calculate_incremental_balances(
+                            &pending_txs,
+                            &collections.tx_col,
+                            &collections.accounts_col,
+                            &collections.balances_col,
+                            &collections.total_supply_col,
+                            &collections.balance_anomalies_col,
+                            &token
+                        ).await {
+                            Ok((_s, _e)) => {
+                                if let Some(max_idx) = pending_txs.iter().filter_map(|tx| tx.index).max() {
+                                    if let Err(e) = update_balance_calculated_index(&db_conn.sync_status_col, &token.symbol, max_idx).await {
+                                        warn!("{}: 更新余额计算进度失败: {}", token.symbol, e);
+                                    }
+                                }
+                                info!("{}: 补算余额完成", token.symbol);
+                            },
+                            Err(e) => {
+                                error!("{}: 补算余额时发生错误: {}", token.symbol, e);
+                            }
+                        }
+                    },
+                    Ok(_) => {
+                        debug!("{}: 未找到需要补算余额的交易", token.symbol);
+                    },
+                    Err(e) => {
+                        error!("{}: 查询待补算交易失败: {}", token.symbol, e);
+                    }
+                }
+            }
+        }
+        
         // 增量同步交易数据
         match sync_ledger_transactions(
             &agent, 
@@ -614,6 +664,13 @@ async fn run_application(cfg: models::Config) -> Result<(), Box<dyn Error>> {
                         Ok((success, error)) => {
                             info!("{}: 增量余额计算完成: 更新了 {} 个账户, 失败 {} 个账户", token.symbol, success, error);
                             *error_count = 0; // 重置错误计数
+
+                            // 余额计算成功后，更新余额计算进度
+                            if let Some(max_idx) = new_transactions.iter().filter_map(|tx| tx.index).max() {
+                                if let Err(e) = update_balance_calculated_index(&db_conn.sync_status_col, &token.symbol, max_idx).await {
+                                    warn!("{}: 更新余额计算进度失败: {}", token.symbol, e);
+                                }
+                            }
                         },
                         Err(e) => {
                             error!("{}: 增量计算余额时出错: {}", token.symbol, e);
